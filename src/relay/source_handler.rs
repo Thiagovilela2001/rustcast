@@ -102,8 +102,7 @@ pub async fn handle_source(sock: TcpStream, mounts: Mounts, db: SqlitePool, pass
     if let Some(ct) = ctype {
         *mount.content_type.lock().unwrap() = ct;
     }
-    mount.media_id.store(0, std::sync::atomic::Ordering::SeqCst);
-    mount.meta.send_replace(ice_name.unwrap_or_else(|| "Ao vivo".into()));
+    mount.set_now(ice_name.unwrap_or_else(|| "Ao vivo".into()), 0);
     r.get_mut().write_all(b"HTTP/1.0 200 OK\r\n\r\n").await?;
     let mut buf = vec![0u8; 8192];
     loop {

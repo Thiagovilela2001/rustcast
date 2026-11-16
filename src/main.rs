@@ -15,9 +15,19 @@ use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
 use relay::{mountpoint::Mounts, source_handler, RelayState};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::Config::from_env();
+    // Few workers is plenty for a radio; each extra thread is stack + scheduler overhead.
+    tokio::runtime::Builder::new_multi_thread().worker_threads(cfg.threads).max_blocking_threads(4).enable_all().build()?.block_on(run(cfg))
+}
+
+/// Lets a website on another origin read now playing / API (GET only, so no preflight needed).
+async fn add_cors(axum::extract::State(origin): axum::extract::State<axum::http::HeaderValue>, mut res: axum::response::Response) -> axum::response::Response {
+    res.headers_mut().insert(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+    res
+}
+
+async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error>> {
     for (name, v, default) in [("RUSTCAST_SOURCE_PASSWORD", &cfg.source_password, "hackme"), ("RUSTCAST_ADMIN_PASSWORD", &cfg.admin_password, "admin")] {
         if v == default {
             eprintln!("WARNING: {name} is the default '{default}' — set it before exposing this server");
@@ -40,8 +50,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mounts,
         media_dir: cfg.media_dir.into(),
         admin_password: cfg.admin_password,
+        public_url: cfg.public_url,
     }))
     .fallback(web::serve);
+    let app = match cfg.cors_origin {
+        Some(o) => app.layer(axum::middleware::map_response_with_state(axum::http::HeaderValue::from_str(&o)?, add_cors)),
+        None => app,
+    };
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
     println!("rustcast listening on {} ({} station(s))", cfg.bind, stations.len());
 

@@ -1,0 +1,12 @@
+radio.blackmesa.works {
+	encode zstd gzip {
+		match {
+			header Content-Type application/json*
+			header Content-Type text/*
+		}
+	}
+	reverse_proxy 127.0.0.1:8000 {
+		# Stream de áudio e SSE: repassar na hora, sem buffer
+		flush_interval -1
+	}
+}

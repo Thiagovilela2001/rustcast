@@ -1,3 +1,4 @@
+pub mod azuracast;
 pub mod djs;
 pub mod media;
 pub mod nowplaying;
@@ -22,6 +23,8 @@ pub struct AppState {
     pub mounts: Mounts,
     pub media_dir: PathBuf,
     pub admin_password: String,
+    /// e.g. https://radio.blackmesa.works — used for absolute URLs in AzuraCast-compatible JSON.
+    pub public_url: String,
 }
 
 pub struct ApiError(StatusCode, String);
@@ -61,6 +64,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/djs/{id}", axum::routing::put(djs::update).delete(djs::remove))
         .route("/api/stations/{id}/nowplaying", get(nowplaying::sse))
         .route("/api/stations/{id}/nowplaying.json", get(nowplaying::json))
+        .route("/api/nowplaying", get(azuracast::all))
+        .route("/api/nowplaying/{station}", get(azuracast::one))
+        .route("/api/nowplaying_static/{station}", get(azuracast::one))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin))
         .with_state(state)
 }

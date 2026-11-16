@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::{broadcast, watch};
 
@@ -19,6 +19,8 @@ pub struct MountPoint {
     pub content_type: Mutex<String>,
     /// Media id now playing from AutoDJ (0 = none / live DJ). Used for cover art in nowplaying.
     pub media_id: AtomicI64,
+    /// Unix secs when the current track / live set started.
+    pub started_at: AtomicU64,
     live: AtomicBool,
 }
 
@@ -30,6 +32,7 @@ impl MountPoint {
             meta: watch::channel(String::new()).0,
             content_type: Mutex::new("audio/mpeg".into()),
             media_id: AtomicI64::new(0),
+            started_at: AtomicU64::new(0),
             live: AtomicBool::new(false),
         }
     }
@@ -49,6 +52,14 @@ impl MountPoint {
     pub fn subscribe(&self) -> (Vec<Bytes>, broadcast::Receiver<Bytes>) {
         let b = self.burst.lock().unwrap();
         (b.chunks.iter().cloned().collect(), self.tx.subscribe())
+    }
+
+    /// Announce what's on air (AutoDJ track or live DJ, media_id 0).
+    pub fn set_now(&self, title: String, media_id: i64) {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        self.started_at.store(now, Ordering::SeqCst);
+        self.media_id.store(media_id, Ordering::SeqCst);
+        self.meta.send_replace(title);
     }
 
     pub fn is_live(&self) -> bool {

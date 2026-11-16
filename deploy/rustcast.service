@@ -1,0 +1,24 @@
+[Unit]
+Description=RustCast radio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=rustcast
+Group=rustcast
+WorkingDirectory=/opt/rustcast
+EnvironmentFile=/etc/rustcast.env
+ExecStart=/opt/rustcast/rustcast
+Restart=always
+RestartSec=2
+# Hard cap: real usage is ~15 MB; 128 MB leaves room for uploads/cover art.
+MemoryMax=128M
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/rustcast/storage
+
+[Install]
+WantedBy=multi-user.target

@@ -24,10 +24,16 @@ pub struct RelayState {
 pub fn router(state: RelayState) -> Router {
     Router::new()
         .route("/mount/{name}", get(listen))
+        // AzuraCast-compatible stream URL: /listen/{shortcode}/radio.mp3 (file name ignored)
+        .route("/listen/{name}/{file}", get(listen_compat))
         .route("/admin/metadata", get(update_metadata))
         .with_state(state)
 }
 
+
+async fn listen_compat(State(s): State<RelayState>, Path((name, _file)): Path<(String, String)>, h: HeaderMap) -> Response {
+    listen(State(s), Path(name), h).await
+}
 
 async fn listen(State(s): State<RelayState>, Path(name): Path<String>, h: HeaderMap) -> Response {
     let Some(mount) = s.mounts.get(&name) else { return StatusCode::NOT_FOUND.into_response() };

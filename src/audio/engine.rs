@@ -4,7 +4,6 @@
 use super::{deck::{Deck, RATE}, encoder::Mp3, mixer::Mixer};
 use crate::relay::mountpoint::MountPoint;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -31,10 +30,7 @@ pub fn spawn(
                 Some(d)
             })
         };
-        let announce = |t: &(String, i64)| {
-            mount.media_id.store(t.1, Ordering::SeqCst);
-            mount.meta.send_replace(t.0.clone());
-        };
+        let announce = |t: &(String, i64)| mount.set_now(t.0.clone(), t.1);
         let tick = Duration::from_secs_f64(BLOCK as f64 / RATE as f64);
         let fade_step = 1.0 / (RESUME_FADE_SECS * RATE as f32);
         let mut deadline = Instant::now();

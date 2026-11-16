@@ -6,6 +6,9 @@ pub struct Config {
     pub admin_password: String,
     pub media_dir: String,
     pub db_path: String,
+    pub threads: usize,
+    pub public_url: String,
+    pub cors_origin: Option<String>,
 }
 
 fn var(k: &str, default: &str) -> String {
@@ -20,6 +23,9 @@ impl Config {
             admin_password: var("RUSTCAST_ADMIN_PASSWORD", "admin"),
             media_dir: var("RUSTCAST_MEDIA_DIR", "storage/media"),
             db_path: var("RUSTCAST_DB", "storage/rustcast.db"),
+            threads: var("RUSTCAST_THREADS", "2").parse().unwrap_or(2).max(1),
+            public_url: var("RUSTCAST_PUBLIC_URL", "").trim_end_matches('/').to_string(),
+            cors_origin: env::var("RUSTCAST_CORS_ORIGIN").ok().filter(|v| !v.is_empty()),
         }
     }
 }
