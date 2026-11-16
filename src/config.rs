@@ -25,9 +25,13 @@ impl Config {
             media_dir: var("RUSTCAST_MEDIA_DIR", "storage/media"),
             db_path: var("RUSTCAST_DB", "storage/rustcast.db"),
             threads: var("RUSTCAST_THREADS", "2").parse().unwrap_or(2).max(1),
-            public_url: var("RUSTCAST_PUBLIC_URL", "").trim_end_matches('/').to_string(),
+            public_url: var("RUSTCAST_PUBLIC_URL", "")
+                .trim_end_matches('/')
+                .to_string(),
             utc_offset_min: var("RUSTCAST_UTC_OFFSET_MIN", "0").parse().unwrap_or(0),
-            cors_origin: env::var("RUSTCAST_CORS_ORIGIN").ok().filter(|v| !v.is_empty()),
+            cors_origin: env::var("RUSTCAST_CORS_ORIGIN")
+                .ok()
+                .filter(|v| !v.is_empty()),
         }
     }
 }

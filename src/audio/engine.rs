@@ -1,7 +1,11 @@
 //! Real-time AutoDJ loop on a dedicated thread: 1152 frames every ~26.12 ms, encoded to MP3, published to a mount.
 //! While a live DJ holds the mount, the AutoDJ freezes (decks keep their position, queue not consumed)
 //! and resumes with a short fade-in when the DJ disconnects.
-use super::{deck::{Deck, RATE}, encoder::Mp3, mixer::Mixer};
+use super::{
+    deck::{Deck, RATE},
+    encoder::Mp3,
+    mixer::Mixer,
+};
 use crate::relay::mountpoint::MountPoint;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,7 +28,9 @@ pub fn spawn(
         let mut open_next = move || {
             (0..8).find_map(|_| {
                 let (p, title, id) = next_track()?;
-                let mut d = Deck::open(&p).map_err(|e| eprintln!("autodj: skip {}: {e}", p.display())).ok()?;
+                let mut d = Deck::open(&p)
+                    .map_err(|e| eprintln!("autodj: skip {}: {e}", p.display()))
+                    .ok()?;
                 d.title = title;
                 d.media_id = id;
                 Some(d)

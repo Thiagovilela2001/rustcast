@@ -2,14 +2,14 @@ pub mod icy;
 pub mod mountpoint;
 pub mod source_handler;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
-use futures_util::{stream, StreamExt};
-use mountpoint::{normalize, Mounts};
+use futures_util::{StreamExt, stream};
+use mountpoint::{Mounts, normalize};
 use serde::Deserialize;
 use std::convert::Infallible;
 use tokio::sync::broadcast::error::RecvError;
@@ -30,13 +30,18 @@ pub fn router(state: RelayState) -> Router {
         .with_state(state)
 }
 
-
-async fn listen_compat(State(s): State<RelayState>, Path((name, _file)): Path<(String, String)>, h: HeaderMap) -> Response {
+async fn listen_compat(
+    State(s): State<RelayState>,
+    Path((name, _file)): Path<(String, String)>,
+    h: HeaderMap,
+) -> Response {
     listen(State(s), Path(name), h).await
 }
 
 async fn listen(State(s): State<RelayState>, Path(name): Path<String>, h: HeaderMap) -> Response {
-    let Some(mount) = s.mounts.get(&name) else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(mount) = s.mounts.get(&name) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let icy = h.get("icy-metadata").is_some_and(|v| v.as_bytes() == b"1");
     let (burst, rx) = mount.subscribe();
     let live = stream::unfold(rx, |mut rx| async move {
@@ -57,7 +62,10 @@ async fn listen(State(s): State<RelayState>, Path(name): Path<String>, h: Header
     let body = if icy {
         resp = resp.header("icy-metaint", icy::METAINT.to_string());
         let mut inj = icy::IcyInjector::new(mount.meta.subscribe());
-        Body::from_stream(raw.flat_map(move |b| stream::iter(inj.process(b))).map(Ok::<_, Infallible>))
+        Body::from_stream(
+            raw.flat_map(move |b| stream::iter(inj.process(b)))
+                .map(Ok::<_, Infallible>),
+        )
     } else {
         Body::from_stream(raw.map(Ok::<_, Infallible>))
     };
@@ -71,13 +79,19 @@ struct MetaQ {
 }
 
 /// Icecast-compatible: GET /admin/metadata?mount=/radio&mode=updinfo&song=Artist%20-%20Title
-async fn update_metadata(State(s): State<RelayState>, h: HeaderMap, Query(q): Query<MetaQ>) -> StatusCode {
+async fn update_metadata(
+    State(s): State<RelayState>,
+    h: HeaderMap,
+    Query(q): Query<MetaQ>,
+) -> StatusCode {
     let name = normalize(&q.mount);
     let auth = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
     if !source_handler::source_auth(&s.db, &name, auth, &s.password).await {
         return StatusCode::UNAUTHORIZED;
     }
-    let Some(mount) = s.mounts.get(&name) else { return StatusCode::NOT_FOUND };
+    let Some(mount) = s.mounts.get(&name) else {
+        return StatusCode::NOT_FOUND;
+    };
     mount.meta.send_replace(q.song);
     StatusCode::OK
 }

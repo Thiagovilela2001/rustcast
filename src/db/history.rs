@@ -2,8 +2,8 @@
 use crate::relay::mountpoint::MountPoint;
 use serde::Serialize;
 use sqlx::SqlitePool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 const KEEP_SECS: i64 = 30 * 24 * 3600;
 
@@ -53,11 +53,12 @@ pub fn start_recorder(db: SqlitePool, mount: Arc<MountPoint>, station_id: i64) {
             }
             inserts += 1;
             if inserts % 100 == 1 {
-                let _ = sqlx::query("DELETE FROM song_history WHERE station_id = ? AND played_at < ?")
-                    .bind(station_id)
-                    .bind(played_at - KEEP_SECS)
-                    .execute(&db)
-                    .await;
+                let _ =
+                    sqlx::query("DELETE FROM song_history WHERE station_id = ? AND played_at < ?")
+                        .bind(station_id)
+                        .bind(played_at - KEEP_SECS)
+                        .execute(&db)
+                        .await;
             }
         }
     });

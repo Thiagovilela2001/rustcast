@@ -4,11 +4,11 @@ pub mod media;
 pub mod nowplaying;
 pub mod playlists;
 
-use crate::db::models::{Station, STATION_COLS};
+use crate::db::models::{STATION_COLS, Station};
 use crate::db::scheduler::start_autodj;
 use crate::relay::{mountpoint::Mounts, source_handler::check_basic};
 use axum::extract::{DefaultBodyLimit, Request, State};
-use axum::http::{header, Method, StatusCode};
+use axum::http::{Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -39,7 +39,12 @@ impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
         match e {
             sqlx::Error::RowNotFound => Self(StatusCode::NOT_FOUND, "not found".into()),
-            e if e.as_database_error().is_some_and(|d| d.is_unique_violation()) => Self(StatusCode::CONFLICT, "already exists".into()),
+            e if e
+                .as_database_error()
+                .is_some_and(|d| d.is_unique_violation()) =>
+            {
+                Self(StatusCode::CONFLICT, "already exists".into())
+            }
             e => Self(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         }
     }
@@ -53,15 +58,40 @@ impl IntoResponse for ApiError {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/stations", get(list_stations).post(create_station))
-        .route("/api/stations/{id}/media", get(media::list).post(media::upload).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route(
+            "/api/stations/{id}/media",
+            get(media::list)
+                .post(media::upload)
+                .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+        )
         .route("/api/media/{id}", delete(media::remove))
         .route("/api/media/{id}/art", get(media::art))
-        .route("/api/stations/{id}/playlists", get(playlists::list).post(playlists::create))
-        .route("/api/playlists/{id}", axum::routing::put(playlists::update).delete(playlists::remove))
-        .route("/api/playlists/{id}/media", get(playlists::list_media).post(playlists::add_media))
-        .route("/api/playlists/{id}/media/{media_id}", delete(playlists::remove_media))
+        .route(
+            "/api/stations/{id}/playlists",
+            get(playlists::list).post(playlists::create),
+        )
+        .route(
+            "/api/playlists/{id}",
+            axum::routing::put(playlists::update).delete(playlists::remove),
+        )
+        .route(
+            "/api/playlists/{id}/media",
+            get(playlists::list_media).post(playlists::add_media),
+        )
+        .route(
+            "/api/playlists/{id}/media/{media_id}",
+            delete(playlists::remove_media),
+        )
+        .route(
+            "/api/playlists/{id}/schedules",
+            get(playlists::list_schedules).post(playlists::add_schedule),
+        )
+        .route("/api/schedules/{id}", delete(playlists::remove_schedule))
         .route("/api/stations/{id}/djs", get(djs::list).post(djs::create))
-        .route("/api/djs/{id}", axum::routing::put(djs::update).delete(djs::remove))
+        .route(
+            "/api/djs/{id}",
+            axum::routing::put(djs::update).delete(djs::remove),
+        )
         .route("/api/stations/{id}/nowplaying", get(nowplaying::sse))
         .route("/api/stations/{id}/nowplaying.json", get(nowplaying::json))
         .route("/api/stations/{id}/history", get(nowplaying::history))
@@ -76,21 +106,37 @@ pub fn router(state: AppState) -> Router {
 
 /// Reads are public (player needs them), except DJ accounts; every write needs Basic Auth `admin:<RUSTCAST_ADMIN_PASSWORD>`.
 async fn require_admin(State(s): State<AppState>, req: Request, next: Next) -> Response {
-    let auth = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+    let auth = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
     let private = req.method() != Method::GET || req.uri().path().ends_with("/djs");
     if private && !check_basic(auth, &s.admin_password) {
-        return (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, "Basic realm=\"rustcast\"")]).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Basic realm=\"rustcast\"")],
+        )
+            .into_response();
     }
     next.run(req).await
 }
 
-async fn station_mount(s: &AppState, id: i64) -> ApiResult<std::sync::Arc<crate::relay::mountpoint::MountPoint>> {
-    let st: Station = sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations WHERE id = ?")).bind(id).fetch_one(&s.db).await?;
+async fn station_mount(
+    s: &AppState,
+    id: i64,
+) -> ApiResult<std::sync::Arc<crate::relay::mountpoint::MountPoint>> {
+    let st: Station = sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations WHERE id = ?"))
+        .bind(id)
+        .fetch_one(&s.db)
+        .await?;
     Ok(s.mounts.get_or_create(&st.mountpoint))
 }
 
 /// POST /api/stations/{id}/skip — next track (short crossfade). 409 while a live DJ is on.
-async fn skip(State(s): State<AppState>, axum::extract::Path(id): axum::extract::Path<i64>) -> ApiResult<StatusCode> {
+async fn skip(
+    State(s): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> ApiResult<StatusCode> {
     if station_mount(&s, id).await?.request_skip() {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -99,16 +145,26 @@ async fn skip(State(s): State<AppState>, axum::extract::Path(id): axum::extract:
 }
 
 /// POST /api/stations/{id}/previous — replay the previous track. 409 if live or no history yet.
-async fn previous(State(s): State<AppState>, axum::extract::Path(id): axum::extract::Path<i64>) -> ApiResult<StatusCode> {
+async fn previous(
+    State(s): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> ApiResult<StatusCode> {
     if station_mount(&s, id).await?.request_previous() {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::new(StatusCode::CONFLICT, "live DJ on air, or no previous track"))
+        Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "live DJ on air, or no previous track",
+        ))
     }
 }
 
 async fn list_stations(State(s): State<AppState>) -> ApiResult<Json<Vec<Station>>> {
-    Ok(Json(sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations ORDER BY id")).fetch_all(&s.db).await?))
+    Ok(Json(
+        sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations ORDER BY id"))
+            .fetch_all(&s.db)
+            .await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -120,12 +176,21 @@ struct NewStation {
 }
 
 pub fn valid_mount(m: &str) -> bool {
-    !m.is_empty() && m.len() <= 64 && m.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    !m.is_empty()
+        && m.len() <= 64
+        && m.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-async fn create_station(State(s): State<AppState>, Json(n): Json<NewStation>) -> ApiResult<(StatusCode, Json<Station>)> {
+async fn create_station(
+    State(s): State<AppState>,
+    Json(n): Json<NewStation>,
+) -> ApiResult<(StatusCode, Json<Station>)> {
     if !valid_mount(&n.mountpoint) || n.name.trim().is_empty() {
-        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "name required; mountpoint: [A-Za-z0-9_-]{1,64}"));
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "name required; mountpoint: [A-Za-z0-9_-]{1,64}",
+        ));
     }
     let st: Station = sqlx::query_as(sql!(
         "INSERT INTO stations (name, mountpoint, bitrate, crossfade_secs) VALUES (?, ?, ?, ?) RETURNING {STATION_COLS}"

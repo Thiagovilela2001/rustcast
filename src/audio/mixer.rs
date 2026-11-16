@@ -15,11 +15,22 @@ pub struct Mixer {
 
 impl Mixer {
     pub fn new(crossfade_secs: f32) -> Self {
-        Self { current: None, next: None, fade_frames: (crossfade_secs * RATE as f32) as u64, fade_pos: 0, fade_len: 1, b: Vec::new() }
+        Self {
+            current: None,
+            next: None,
+            fade_frames: (crossfade_secs * RATE as f32) as u64,
+            fade_pos: 0,
+            fade_len: 1,
+            b: Vec::new(),
+        }
     }
 
     /// Fill `out` (interleaved stereo). Silence when nothing to play. Returns new title when a track takes over.
-    pub fn fill(&mut self, out: &mut [f32], open_next: &mut dyn FnMut() -> Option<Deck>) -> Option<(String, i64)> {
+    pub fn fill(
+        &mut self,
+        out: &mut [f32],
+        open_next: &mut dyn FnMut() -> Option<Deck>,
+    ) -> Option<(String, i64)> {
         let mut title = None;
         if self.current.is_none() {
             self.current = open_next();
@@ -29,7 +40,8 @@ impl Mixer {
             out.fill(0.0);
             return None;
         };
-        if self.next.is_none() && self.fade_frames > 0
+        if self.next.is_none()
+            && self.fade_frames > 0
             && let Some(rem) = cur.remaining_frames()
             && rem <= self.fade_frames
         {
@@ -41,8 +53,13 @@ impl Mixer {
         if let Some(nx) = &mut self.next {
             self.b.resize(out.len(), 0.0);
             nx.read(&mut self.b);
-            for (i, (a, b)) in out.chunks_exact_mut(2).zip(self.b.chunks_exact(2)).enumerate() {
-                let t = ((self.fade_pos + i as u64) as f32 / self.fade_len as f32).min(1.0) * FRAC_PI_2;
+            for (i, (a, b)) in out
+                .chunks_exact_mut(2)
+                .zip(self.b.chunks_exact(2))
+                .enumerate()
+            {
+                let t =
+                    ((self.fade_pos + i as u64) as f32 / self.fade_len as f32).min(1.0) * FRAC_PI_2;
                 let (ga, gb) = (t.cos(), t.sin());
                 a[0] = a[0] * ga + b[0] * gb;
                 a[1] = a[1] * ga + b[1] * gb;

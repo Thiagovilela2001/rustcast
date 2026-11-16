@@ -1,5 +1,7 @@
 use bytes::Bytes;
-use mp3lame_encoder::{max_required_buffer_size, Bitrate, Builder, Encoder, InterleavedPcm, Quality};
+use mp3lame_encoder::{
+    Bitrate, Builder, Encoder, InterleavedPcm, Quality, max_required_buffer_size,
+};
 
 pub struct Mp3(Encoder);
 

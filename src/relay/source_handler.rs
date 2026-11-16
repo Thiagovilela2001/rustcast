@@ -1,16 +1,20 @@
 //! Source ingestion on raw TCP: Icecast-style `PUT` (no length, body until close) and legacy `SOURCE` (Mixxx/BUTT/VirtualDJ).
 //! ponytail: chunked PUT bodies not decoded; no Icecast client sends them.
-use super::mountpoint::{normalize, Mounts};
+use super::mountpoint::{Mounts, normalize};
 use base64::Engine;
 use bytes::Bytes;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use sqlx::SqlitePool;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 pub fn parse_basic(header: Option<&str>) -> Option<(String, String)> {
     let enc = header?.strip_prefix("Basic ")?;
-    let dec = base64::engine::general_purpose::STANDARD.decode(enc.trim()).ok()?;
-    let (u, p) = String::from_utf8_lossy(&dec).split_once(':').map(|(u, p)| (u.to_string(), p.to_string()))?;
+    let dec = base64::engine::general_purpose::STANDARD
+        .decode(enc.trim())
+        .ok()?;
+    let (u, p) = String::from_utf8_lossy(&dec)
+        .split_once(':')
+        .map(|(u, p)| (u.to_string(), p.to_string()))?;
     Some((u, p))
 }
 
@@ -20,17 +24,26 @@ pub fn check_basic(header: Option<&str>, password: &str) -> bool {
 
 pub fn hash_password(pw: &str) -> String {
     use argon2::password_hash::PasswordHasher;
-    argon2::Argon2::default().hash_password(pw.as_bytes()).expect("argon2 hash").to_string()
+    argon2::Argon2::default()
+        .hash_password(pw.as_bytes())
+        .expect("argon2 hash")
+        .to_string()
 }
 
 fn verify_password(pw: &str, hash: &str) -> bool {
-    use argon2::password_hash::{phc::PasswordHash, PasswordVerifier};
-    PasswordHash::new(hash).is_ok_and(|h| argon2::Argon2::default().verify_password(pw.as_bytes(), &h).is_ok())
+    use argon2::password_hash::{PasswordVerifier, phc::PasswordHash};
+    PasswordHash::new(hash).is_ok_and(|h| {
+        argon2::Argon2::default()
+            .verify_password(pw.as_bytes(), &h)
+            .is_ok()
+    })
 }
 
 /// Master source password (any user), or an active DJ account of the station that owns `mount`.
 pub async fn source_auth(db: &SqlitePool, mount: &str, header: Option<&str>, master: &str) -> bool {
-    let Some((user, pass)) = parse_basic(header) else { return false };
+    let Some((user, pass)) = parse_basic(header) else {
+        return false;
+    };
     if pass == master {
         return true;
     }
@@ -45,7 +58,9 @@ pub async fn source_auth(db: &SqlitePool, mount: &str, header: Option<&str>, mas
     .ok()
     .flatten();
     match hash {
-        Some((h,)) => tokio::task::spawn_blocking(move || verify_password(&pass, &h)).await.unwrap_or(false),
+        Some((h,)) => tokio::task::spawn_blocking(move || verify_password(&pass, &h))
+            .await
+            .unwrap_or(false),
         None => false,
     }
 }
@@ -55,7 +70,9 @@ pub async fn source_auth(db: &SqlitePool, mount: &str, header: Option<&str>, mas
 pub async fn is_source(sock: &TcpStream) -> bool {
     let mut buf = [0u8; 9];
     for _ in 0..200 {
-        let Ok(n) = sock.peek(&mut buf).await else { return false };
+        let Ok(n) = sock.peek(&mut buf).await else {
+            return false;
+        };
         if let Some(v) = classify(&buf[..n]) {
             return v;
         }
@@ -79,7 +96,11 @@ fn classify(b: &[u8]) -> Option<bool> {
     }
     if b.starts_with(b"PUT ") {
         // could still turn into "PUT /api/" -> wait; otherwise it's a source
-        return if prefix(b"PUT /api/") { None } else { Some(true) };
+        return if prefix(b"PUT /api/") {
+            None
+        } else {
+            Some(true)
+        };
     }
     if prefix(b"SOURCE ") || prefix(b"PUT ") {
         return None;
@@ -102,12 +123,21 @@ mod tests {
         assert_eq!(classify(b"PU"), None);
         assert_eq!(classify(b"PUT /ap"), None);
         assert_eq!(classify(b"SOUR"), None);
-        assert_eq!(classify(b"PUT /ab"), Some(true), "can't become /api/ anymore");
+        assert_eq!(
+            classify(b"PUT /ab"),
+            Some(true),
+            "can't become /api/ anymore"
+        );
         assert_eq!(classify(b"PUT /"), None);
     }
 }
 
-pub async fn handle_source(sock: TcpStream, mounts: Mounts, db: SqlitePool, password: String) -> std::io::Result<()> {
+pub async fn handle_source(
+    sock: TcpStream,
+    mounts: Mounts,
+    db: SqlitePool,
+    password: String,
+) -> std::io::Result<()> {
     let mut r = BufReader::new(sock);
     let mut line = String::new();
     r.read_line(&mut line).await?;
@@ -130,12 +160,18 @@ pub async fn handle_source(sock: TcpStream, mounts: Mounts, db: SqlitePool, pass
     }
     let name = normalize(&path);
     if !source_auth(&db, &name, auth.as_deref(), &password).await {
-        r.get_mut().write_all(b"HTTP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"rustcast\"\r\n\r\n").await?;
+        r.get_mut()
+            .write_all(
+                b"HTTP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"rustcast\"\r\n\r\n",
+            )
+            .await?;
         return Ok(());
     }
     let mount = mounts.get_or_create(&name);
     let Some(_guard) = mount.claim() else {
-        r.get_mut().write_all(b"HTTP/1.0 403 Mountpoint in use\r\n\r\n").await?;
+        r.get_mut()
+            .write_all(b"HTTP/1.0 403 Mountpoint in use\r\n\r\n")
+            .await?;
         return Ok(());
     };
     if let Some(ct) = ctype {

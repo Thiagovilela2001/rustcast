@@ -67,7 +67,9 @@ impl MountPoint {
 
     /// Announce what's on air (AutoDJ track or live DJ, media_id 0).
     pub fn set_now(&self, title: String, media_id: i64) {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
         self.started_at.store(now, Ordering::SeqCst);
         self.media_id.store(media_id, Ordering::SeqCst);
         if media_id > 0 {
@@ -135,7 +137,12 @@ impl Mounts {
         self.0.read().unwrap().get(name).cloned()
     }
     pub fn get_or_create(&self, name: &str) -> Arc<MountPoint> {
-        self.0.write().unwrap().entry(name.into()).or_insert_with(|| Arc::new(MountPoint::new())).clone()
+        self.0
+            .write()
+            .unwrap()
+            .entry(name.into())
+            .or_insert_with(|| Arc::new(MountPoint::new()))
+            .clone()
     }
 }
 

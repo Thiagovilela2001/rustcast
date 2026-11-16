@@ -25,7 +25,11 @@ pub struct IcyInjector {
 
 impl IcyInjector {
     pub fn new(meta: watch::Receiver<String>) -> Self {
-        Self { until: METAINT, meta, first: true }
+        Self {
+            until: METAINT,
+            meta,
+            first: true,
+        }
     }
 
     pub fn process(&mut self, mut chunk: Bytes) -> Vec<Bytes> {

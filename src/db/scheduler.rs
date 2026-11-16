@@ -1,13 +1,14 @@
 //! Picks the next track. Behaviour modelled on AzuraCast's AutoDJ (clean reimplementation, no code reused):
 //! playlist types by priority (once per hour > once per X songs > once per X minutes > default by weight),
 //! orders shuffle / random / sequential, artist anti-repeat. Reads the DB every pick, so API edits apply at once.
-use super::models::{Media, Playlist, Station, MEDIA_COLS, PLAYLIST_COLS};
+use super::models::{MEDIA_COLS, Media, PLAYLIST_COLS, Playlist, Station};
+use super::schedule::{SCHEDULE_COLS, Schedule};
 use crate::audio::engine;
 use crate::relay::mountpoint::Mounts;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 const NO_REPEAT_ARTISTS: usize = 3;
@@ -15,10 +16,17 @@ const NO_REPEAT_ARTISTS: usize = 3;
 const HISTORY: usize = 2000;
 /// Station local time offset from UTC in minutes (e.g. -180 for Brasília). Set once at startup.
 pub static UTC_OFFSET_MIN: AtomicI64 = AtomicI64::new(0);
-const TYPES_BY_PRIORITY: [&str; 4] = ["once_per_hour", "once_per_x_songs", "once_per_x_minutes", "default"];
+const TYPES_BY_PRIORITY: [&str; 4] = [
+    "once_per_hour",
+    "once_per_x_songs",
+    "once_per_x_minutes",
+    "default",
+];
 
 fn unix_now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Once-per-hour rule: due from minute `target` for 15 minutes, if not played in the last 30.
@@ -41,16 +49,26 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(db: SqlitePool, station_id: i64) -> Self {
-        Self { db, station_id, recent: VecDeque::new(), played: VecDeque::new(), lookahead: None, loaded: false, since: HashMap::new() }
+        Self {
+            db,
+            station_id,
+            recent: VecDeque::new(),
+            played: VecDeque::new(),
+            lookahead: None,
+            loaded: false,
+            since: HashMap::new(),
+        }
     }
 
     /// Fetch a specific track (admin "previous"); it still counts in the shuffle history.
     pub async fn forced(&mut self, id: i64) -> sqlx::Result<Option<Media>> {
-        let m: Option<Media> = sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND station_id = ?"))
-            .bind(id)
-            .bind(self.station_id)
-            .fetch_optional(&self.db)
-            .await?;
+        let m: Option<Media> = sqlx::query_as(sql!(
+            "SELECT {MEDIA_COLS} FROM media WHERE id = ? AND station_id = ?"
+        ))
+        .bind(id)
+        .bind(self.station_id)
+        .fetch_optional(&self.db)
+        .await?;
         if let Some(m) = &m {
             self.played.push_back(m.id);
         }
@@ -98,9 +116,16 @@ impl Scheduler {
     fn eligible(&self, p: &Playlist, now: i64) -> bool {
         match p.playlist_type.as_str() {
             "default" => p.weight > 0,
-            "once_per_x_songs" => p.play_per > 0 && self.since.get(&p.id).copied().unwrap_or(0) >= p.play_per,
+            "once_per_x_songs" => {
+                p.play_per > 0 && self.since.get(&p.id).copied().unwrap_or(0) >= p.play_per
+            }
             "once_per_x_minutes" => p.play_per > 0 && now - p.played_at >= p.play_per * 60,
-            "once_per_hour" => per_hour_due(now, UTC_OFFSET_MIN.load(Ordering::Relaxed), p.play_per_hour_minute, p.played_at),
+            "once_per_hour" => per_hour_due(
+                now,
+                UTC_OFFSET_MIN.load(Ordering::Relaxed),
+                p.play_per_hour_minute,
+                p.played_at,
+            ),
             _ => false,
         }
     }
@@ -113,14 +138,40 @@ impl Scheduler {
         .fetch_all(&self.db)
         .await?;
         let now = unix_now();
+        let offset = UTC_OFFSET_MIN.load(Ordering::Relaxed);
+        let scheds: Vec<Schedule> = sqlx::query_as(sql!(
+            "SELECT {SCHEDULE_COLS} FROM playlist_schedules WHERE playlist_id IN (SELECT id FROM playlists WHERE station_id = ?)"
+        ))
+        .bind(self.station_id)
+        .fetch_all(&self.db)
+        .await?;
+        // None = no schedule (always on); Some(active?) = scheduled
+        let sched_state = |id: i64| {
+            let mine: Vec<&Schedule> = scheds.iter().filter(|s| s.playlist_id == id).collect();
+            (!mine.is_empty()).then(|| mine.iter().any(|s| s.active(now, offset)))
+        };
+        // AzuraCast priority: per type, scheduled-and-active playlists first, then unscheduled ones.
         for ty in TYPES_BY_PRIORITY {
-            let due: Vec<&Playlist> = pls.iter().filter(|p| p.playlist_type == ty && self.eligible(p, now)).collect();
-            for p in weighted_order(due, ty == "default") {
-                if let Some(m) = self.from_playlist(p).await? {
-                    sqlx::query("UPDATE playlists SET played_at = ? WHERE id = ?").bind(now).bind(p.id).execute(&self.db).await?;
-                    self.bump_since(&pls, Some(p.id));
-                    self.played_push(&m, ty == "default");
-                    return Ok(Some(m));
+            for scheduled in [true, false] {
+                let due: Vec<&Playlist> = pls
+                    .iter()
+                    .filter(|p| p.playlist_type == ty && self.eligible(p, now))
+                    .filter(|p| match sched_state(p.id) {
+                        Some(active) => scheduled && active,
+                        None => !scheduled,
+                    })
+                    .collect();
+                for p in weighted_order(due, ty == "default") {
+                    if let Some(m) = self.from_playlist(p).await? {
+                        sqlx::query("UPDATE playlists SET played_at = ? WHERE id = ?")
+                            .bind(now)
+                            .bind(p.id)
+                            .execute(&self.db)
+                            .await?;
+                        self.bump_since(&pls, Some(p.id));
+                        self.played_push(&m, ty == "default");
+                        return Ok(Some(m));
+                    }
                 }
             }
         }
@@ -133,7 +184,10 @@ impl Scheduler {
         .fetch_all(&self.db)
         .await?;
         if all.is_empty() {
-            all = sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE station_id = ?")).bind(self.station_id).fetch_all(&self.db).await?;
+            all = sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE station_id = ?"))
+                .bind(self.station_id)
+                .fetch_all(&self.db)
+                .await?;
         }
         self.bump_since(&pls, None);
         let m = choose(&all, &self.played, &self.recent, usize::MAX).cloned();
@@ -154,7 +208,11 @@ impl Scheduler {
     }
 
     async fn from_playlist(&mut self, p: &Playlist) -> sqlx::Result<Option<Media>> {
-        let cols = MEDIA_COLS.split(", ").map(|c| format!("m.{c}")).collect::<Vec<_>>().join(", ");
+        let cols = MEDIA_COLS
+            .split(", ")
+            .map(|c| format!("m.{c}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         if p.play_order == "sequential" {
             // next position after the cursor, wrapping to the start
             let q = sql!(
@@ -162,10 +220,29 @@ impl Scheduler {
                  WHERE pm.playlist_id = ? ORDER BY (pm.position <= ?), pm.position, m.id LIMIT 1"
             );
             let row: Option<(i64, i64, String, String, String, Option<String>, i64, i64)> =
-                sqlx::query_as(q).bind(p.id).bind(p.queue_pos).fetch_optional(&self.db).await?;
-            let Some((id, station_id, file_path, title, artist, album, duration_ms, pos)) = row else { return Ok(None) };
-            sqlx::query("UPDATE playlists SET queue_pos = ? WHERE id = ?").bind(pos).bind(p.id).execute(&self.db).await?;
-            return Ok(Some(Media { id, station_id, file_path, title, artist, album, duration_ms }));
+                sqlx::query_as(q)
+                    .bind(p.id)
+                    .bind(p.queue_pos)
+                    .fetch_optional(&self.db)
+                    .await?;
+            let Some((id, station_id, file_path, title, artist, album, duration_ms, pos)) = row
+            else {
+                return Ok(None);
+            };
+            sqlx::query("UPDATE playlists SET queue_pos = ? WHERE id = ?")
+                .bind(pos)
+                .bind(p.id)
+                .execute(&self.db)
+                .await?;
+            return Ok(Some(Media {
+                id,
+                station_id,
+                file_path,
+                title,
+                artist,
+                album,
+                duration_ms,
+            }));
         }
         let cands: Vec<Media> = sqlx::query_as(sql!(
             "SELECT {cols} FROM media m JOIN playlist_media pm ON pm.media_id = m.id WHERE pm.playlist_id = ?"
@@ -173,9 +250,17 @@ impl Scheduler {
         .bind(p.id)
         .fetch_all(&self.db)
         .await?;
-        let window = if p.play_order == "random" { 1 } else { usize::MAX };
+        let window = if p.play_order == "random" {
+            1
+        } else {
+            usize::MAX
+        };
         let none = VecDeque::new();
-        let artists = if p.playlist_type == "default" { &self.recent } else { &none };
+        let artists = if p.playlist_type == "default" {
+            &self.recent
+        } else {
+            &none
+        };
         Ok(choose(&cands, &self.played, artists, window).cloned())
     }
 
@@ -196,14 +281,30 @@ impl Scheduler {
 /// Shuffle rotation: never repeat a track until every other candidate played (window = n-1, capped by `window`;
 /// window 1 = "random": only no immediate repeat), and avoid the last 3 artists ("Unknown" doesn't count).
 /// Rules relax, artist first, only if nothing is left.
-fn choose<'a>(candidates: &'a [Media], played: &VecDeque<i64>, artists: &VecDeque<String>, window: usize) -> Option<&'a Media> {
-    let max_tw = candidates.len().saturating_sub(1).min(played.len()).min(window);
+fn choose<'a>(
+    candidates: &'a [Media],
+    played: &VecDeque<i64>,
+    artists: &VecDeque<String>,
+    window: usize,
+) -> Option<&'a Media> {
+    let max_tw = candidates
+        .len()
+        .saturating_sub(1)
+        .min(played.len())
+        .min(window);
     (0..=max_tw).rev().find_map(|tw| {
         let skip_ids: Vec<i64> = played.iter().rev().take(tw).copied().collect();
-        let base: Vec<&Media> = candidates.iter().filter(|m| !skip_ids.contains(&m.id)).collect();
+        let base: Vec<&Media> = candidates
+            .iter()
+            .filter(|m| !skip_ids.contains(&m.id))
+            .collect();
         let pool = (0..=artists.len()).rev().find_map(|k| {
             let skip: Vec<&String> = artists.iter().rev().take(k).collect();
-            let p: Vec<&Media> = base.iter().copied().filter(|m| m.artist == "Unknown" || !skip.contains(&&m.artist)).collect();
+            let p: Vec<&Media> = base
+                .iter()
+                .copied()
+                .filter(|m| m.artist == "Unknown" || !skip.contains(&&m.artist))
+                .collect();
             (!p.is_empty()).then_some(p)
         })?;
         Some(pool[fastrand::usize(..pool.len())])
@@ -220,10 +321,13 @@ fn weighted_order(mut v: Vec<&Playlist>, use_weight: bool) -> Vec<&Playlist> {
             return out;
         }
         let mut r = fastrand::i64(0..total);
-        let i = v.iter().position(|p| {
-            r -= w(p);
-            r < 0
-        }).unwrap();
+        let i = v
+            .iter()
+            .position(|p| {
+                r -= w(p);
+                r < 0
+            })
+            .unwrap();
         out.push(v.remove(i));
     }
 }
@@ -236,29 +340,45 @@ pub fn start_autodj(db: SqlitePool, mounts: &Mounts, st: &Station) {
     let mount = mounts.get_or_create(&st.mountpoint);
     super::history::start_recorder(db.clone(), mount.clone(), st.id);
     let ctl = mount.clone();
-    engine::spawn(mount, st.bitrate as u32, st.crossfade_secs as f32, move || {
-        let forced = ctl.requeue.lock().unwrap().pop_front();
-        if let Some(id) = forced
-            && let Ok(Some(m)) = rt.block_on(sched.forced(id))
-        {
-            return Some((PathBuf::from(m.file_path), format!("{} - {}", m.artist, m.title), m.id));
-        }
-        if Instant::now() < idle_until {
-            return None; // empty catalog: don't hit the DB every 26 ms
-        }
-        let picked = rt.block_on(sched.next());
-        ctl.next_up.store(sched.peek().map_or(0, |m| m.id), std::sync::atomic::Ordering::SeqCst);
-        match picked {
-            Ok(Some(m)) => Some((PathBuf::from(m.file_path), format!("{} - {}", m.artist, m.title), m.id)),
-            other => {
-                if let Err(e) = other {
-                    eprintln!("scheduler: {e}");
-                }
-                idle_until = Instant::now() + Duration::from_secs(2);
-                None
+    engine::spawn(
+        mount,
+        st.bitrate as u32,
+        st.crossfade_secs as f32,
+        move || {
+            let forced = ctl.requeue.lock().unwrap().pop_front();
+            if let Some(id) = forced
+                && let Ok(Some(m)) = rt.block_on(sched.forced(id))
+            {
+                return Some((
+                    PathBuf::from(m.file_path),
+                    format!("{} - {}", m.artist, m.title),
+                    m.id,
+                ));
             }
-        }
-    });
+            if Instant::now() < idle_until {
+                return None; // empty catalog: don't hit the DB every 26 ms
+            }
+            let picked = rt.block_on(sched.next());
+            ctl.next_up.store(
+                sched.peek().map_or(0, |m| m.id),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            match picked {
+                Ok(Some(m)) => Some((
+                    PathBuf::from(m.file_path),
+                    format!("{} - {}", m.artist, m.title),
+                    m.id,
+                )),
+                other => {
+                    if let Err(e) = other {
+                        eprintln!("scheduler: {e}");
+                    }
+                    idle_until = Instant::now() + Duration::from_secs(2);
+                    None
+                }
+            }
+        },
+    );
 }
 
 #[cfg(test)]
@@ -268,8 +388,19 @@ mod tests {
     #[test]
     fn shuffle_plays_everything_before_repeating() {
         let media: Vec<Media> = (1..=41)
-            .map(|id| Media { id, station_id: 1, file_path: String::new(), title: String::new(),
-                artist: if id <= 8 { "Unknown".into() } else { format!("A{}", id % 15) }, album: None, duration_ms: 0 })
+            .map(|id| Media {
+                id,
+                station_id: 1,
+                file_path: String::new(),
+                title: String::new(),
+                artist: if id <= 8 {
+                    "Unknown".into()
+                } else {
+                    format!("A{}", id % 15)
+                },
+                album: None,
+                duration_ms: 0,
+            })
             .collect();
         let (mut played, mut artists) = (VecDeque::new(), VecDeque::new());
         for round in 0..3 {
@@ -279,7 +410,9 @@ mod tests {
                 assert!(seen.insert(m.id), "round {round}: {} repeated", m.id);
                 played.push_back(m.id);
                 artists.push_back(m.artist.clone());
-                if artists.len() > NO_REPEAT_ARTISTS { artists.pop_front(); }
+                if artists.len() > NO_REPEAT_ARTISTS {
+                    artists.pop_front();
+                }
             }
         }
         let one = [media[0].clone()];
@@ -287,8 +420,20 @@ mod tests {
     }
 
     fn pl(id: i64, weight: i64) -> Playlist {
-        Playlist { id, station_id: 1, name: String::new(), weight, playlist_type: "default".into(), play_per: 0,
-            play_per_hour_minute: 0, play_order: "shuffle".into(), played_at: 0, queue_pos: -1, is_jingle: false, jingle_interval: None }
+        Playlist {
+            id,
+            station_id: 1,
+            name: String::new(),
+            weight,
+            playlist_type: "default".into(),
+            play_per: 0,
+            play_per_hour_minute: 0,
+            play_order: "shuffle".into(),
+            played_at: 0,
+            queue_pos: -1,
+            is_jingle: false,
+            jingle_interval: None,
+        }
     }
 
     #[test]
@@ -301,7 +446,11 @@ mod tests {
             first[o[0].id as usize] += 1;
         }
         assert!(first[2] > 8_500 && first[3] > 600, "{first:?}");
-        assert_eq!(weighted_order(pls.iter().collect(), false).len(), 3, "unweighted keeps all");
+        assert_eq!(
+            weighted_order(pls.iter().collect(), false).len(),
+            3,
+            "unweighted keeps all"
+        );
     }
 
     #[test]
@@ -311,7 +460,10 @@ mod tests {
         assert!(per_hour_due(t(10, 15), 0, 0, 0));
         assert!(!per_hour_due(t(10, 16), 0, 0, 0));
         assert!(!per_hour_due(t(9, 59), 0, 0, 0));
-        assert!(per_hour_due(t(10, 2), 0, 55, 0), "window wraps the hour: 55..10");
+        assert!(
+            per_hour_due(t(10, 2), 0, 55, 0),
+            "window wraps the hour: 55..10"
+        );
         assert!(!per_hour_due(t(10, 5), 0, 0, t(10, 1)), "played 4 min ago");
         // -180 min offset (Brasília): 13:30 UTC == 10:30 local
         assert!(per_hour_due(t(13, 30), -180, 30, 0));
@@ -319,8 +471,17 @@ mod tests {
 
     #[test]
     fn random_window_only_blocks_immediate_repeat() {
-        let media: Vec<Media> = (1..=3).map(|id| Media { id, station_id: 1, file_path: String::new(), title: String::new(),
-            artist: "Unknown".into(), album: None, duration_ms: 0 }).collect();
+        let media: Vec<Media> = (1..=3)
+            .map(|id| Media {
+                id,
+                station_id: 1,
+                file_path: String::new(),
+                title: String::new(),
+                artist: "Unknown".into(),
+                album: None,
+                duration_ms: 0,
+            })
+            .collect();
         let played: VecDeque<i64> = [1, 2].into();
         for _ in 0..200 {
             assert_ne!(choose(&media, &played, &VecDeque::new(), 1).unwrap().id, 2);

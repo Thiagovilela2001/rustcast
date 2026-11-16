@@ -1,24 +1,30 @@
 //! AzuraCast-compatible now playing, so existing site players work by only swapping the domain.
 //! Station key = id or shortcode (our shortcode is the mountpoint).
 use super::{ApiResult, AppState};
-use crate::db::models::{Media, Station, MEDIA_COLS, STATION_COLS};
-use axum::extract::{Path, State};
+use crate::db::models::{MEDIA_COLS, Media, STATION_COLS, Station};
 use axum::Json;
-use serde_json::{json, Value};
+use axum::extract::{Path, State};
+use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
 
 async fn station(s: &AppState, key: &str) -> ApiResult<Station> {
-    Ok(sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations WHERE CAST(id AS TEXT) = ? OR mountpoint = ?"))
-        .bind(key)
-        .bind(key)
-        .fetch_one(&s.db)
-        .await?)
+    Ok(sqlx::query_as(sql!(
+        "SELECT {STATION_COLS} FROM stations WHERE CAST(id AS TEXT) = ? OR mountpoint = ?"
+    ))
+    .bind(key)
+    .bind(key)
+    .fetch_one(&s.db)
+    .await?)
 }
 
 fn song(base: &str, id: i64, text: &str, media: Option<&Media>) -> Value {
     let (artist, title) = match media {
         Some(md) => (md.artist.clone(), md.title.clone()),
-        None => text.split_once(" - ").map_or((String::new(), text.to_string()), |(a, t)| (a.into(), t.into())),
+        None => text
+            .split_once(" - ")
+            .map_or((String::new(), text.to_string()), |(a, t)| {
+                (a.into(), t.into())
+            }),
     };
     json!({
         "id": id.to_string(), "text": if artist.is_empty() { title.clone() } else { format!("{artist} - {title}") },
@@ -32,7 +38,12 @@ async fn media_by_id(s: &AppState, id: i64) -> Option<Media> {
     if id <= 0 {
         return None;
     }
-    sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE id = ?")).bind(id).fetch_optional(&s.db).await.ok().flatten()
+    sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE id = ?"))
+        .bind(id)
+        .fetch_optional(&s.db)
+        .await
+        .ok()
+        .flatten()
 }
 
 async fn np(s: &AppState, st: &Station) -> Value {
@@ -42,7 +53,12 @@ async fn np(s: &AppState, st: &Station) -> Value {
     let id = m.media_id.load(Ordering::SeqCst);
     let live = m.is_live();
     let media: Option<Media> = if id > 0 && !live {
-        sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE id = ?")).bind(id).fetch_optional(&s.db).await.ok().flatten()
+        sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE id = ?"))
+            .bind(id)
+            .fetch_optional(&s.db)
+            .await
+            .ok()
+            .flatten()
     } else {
         None
     };
@@ -54,10 +70,20 @@ async fn np(s: &AppState, st: &Station) -> Value {
         },
     };
     let started = m.started_at.load(Ordering::SeqCst) as i64;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
     let duration = media.as_ref().map_or(0, |md| md.duration_ms / 1000);
-    let elapsed = if started > 0 { (now - started).max(0) } else { 0 };
-    let elapsed = if duration > 0 { elapsed.min(duration) } else { elapsed };
+    let elapsed = if started > 0 {
+        (now - started).max(0)
+    } else {
+        0
+    };
+    let elapsed = if duration > 0 {
+        elapsed.min(duration)
+    } else {
+        elapsed
+    };
     let next_id = m.next_up.load(Ordering::SeqCst);
     let playing_next = match (live, media_by_id(s, next_id).await) {
         (false, Some(md)) => json!({
@@ -67,10 +93,15 @@ async fn np(s: &AppState, st: &Station) -> Value {
         _ => Value::Null,
     };
     // last 5 before the current one
-    let rows = crate::db::history::recent(&s.db, st.id, 6).await.unwrap_or_default();
+    let rows = crate::db::history::recent(&s.db, st.id, 6)
+        .await
+        .unwrap_or_default();
     let mut song_history = Vec::new();
     for r in rows.iter().skip(1) {
-        let md = match r.media_id { Some(mid) => media_by_id(s, mid).await, None => None };
+        let md = match r.media_id {
+            Some(mid) => media_by_id(s, mid).await,
+            None => None,
+        };
         song_history.push(json!({
             "sh_id": r.id, "played_at": r.played_at, "duration": md.as_ref().map_or(0, |x| x.duration_ms / 1000),
             "playlist": "", "streamer": if r.is_live { r.text.as_str() } else { "" }, "is_request": false,
@@ -106,7 +137,10 @@ async fn np(s: &AppState, st: &Station) -> Value {
 
 /// GET /api/nowplaying
 pub async fn all(State(s): State<AppState>) -> ApiResult<Json<Vec<Value>>> {
-    let stations: Vec<Station> = sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations ORDER BY id")).fetch_all(&s.db).await?;
+    let stations: Vec<Station> =
+        sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations ORDER BY id"))
+            .fetch_all(&s.db)
+            .await?;
     let mut out = Vec::with_capacity(stations.len());
     for st in &stations {
         out.push(np(&s, st).await);

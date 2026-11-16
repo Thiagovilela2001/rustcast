@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::path::Path;
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder, DecoderOptions};
 use symphonia::core::errors::Error as SymErr;
 use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::MediaSourceStream;
@@ -20,8 +20,8 @@ pub struct Deck {
     decoder: Box<dyn Decoder>,
     track_id: u32,
     resampler: Option<Fft<f32>>,
-    pending: Vec<f32>,   // stereo @ source rate, waiting for resampler
-    out: VecDeque<f32>,  // stereo @ 44.1k, ready
+    pending: Vec<f32>,  // stereo @ source rate, waiting for resampler
+    out: VecDeque<f32>, // stereo @ 44.1k, ready
     total_frames: Option<u64>,
     played: u64,
     eof: bool,
@@ -36,22 +36,43 @@ impl Deck {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             hint.with_extension(ext);
         }
-        let probed = symphonia::default::get_probe().format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())?;
+        let probed = symphonia::default::get_probe().format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )?;
         let format = probed.format;
-        let track = format.tracks().iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL).ok_or("no audio track")?;
-        let src_rate = track.codec_params.sample_rate.ok_or("unknown sample rate")?;
-        let resampler = (src_rate != RATE).then(|| Fft::new(src_rate as usize, RATE as usize, CHUNK, 2, FixedSync::Input)).transpose()?;
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or("no audio track")?;
+        let src_rate = track
+            .codec_params
+            .sample_rate
+            .ok_or("unknown sample rate")?;
+        let resampler = (src_rate != RATE)
+            .then(|| Fft::new(src_rate as usize, RATE as usize, CHUNK, 2, FixedSync::Input))
+            .transpose()?;
         Ok(Self {
-            decoder: symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?,
+            decoder: symphonia::default::get_codecs()
+                .make(&track.codec_params, &DecoderOptions::default())?,
             track_id: track.id,
-            total_frames: track.codec_params.n_frames.map(|n| n * RATE as u64 / src_rate as u64),
+            total_frames: track
+                .codec_params
+                .n_frames
+                .map(|n| n * RATE as u64 / src_rate as u64),
             format,
             resampler,
             pending: Vec::new(),
             out: VecDeque::new(),
             played: 0,
             eof: false,
-            title: path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            title: path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             media_id: 0,
         })
     }
@@ -107,7 +128,11 @@ impl Deck {
             let ch = spec.channels.count();
             let mut sb = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
             sb.copy_interleaved_ref(decoded);
-            let dst = if self.resampler.is_some() { &mut self.pending } else { &mut Vec::new() };
+            let dst = if self.resampler.is_some() {
+                &mut self.pending
+            } else {
+                &mut Vec::new()
+            };
             for f in sb.samples().chunks_exact(ch) {
                 let (l, r) = if ch == 1 { (f[0], f[0]) } else { (f[0], f[1]) };
                 dst.extend([l, r]);

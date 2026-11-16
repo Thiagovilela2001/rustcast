@@ -1,8 +1,8 @@
 use super::{ApiError, ApiResult, AppState};
 use crate::relay::source_handler::hash_password;
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 #[derive(sqlx::FromRow, Serialize)]
@@ -33,18 +33,36 @@ pub struct DjIn {
 fn hash(pw: Option<String>) -> ApiResult<Option<String>> {
     match pw {
         None => Ok(None),
-        Some(p) if p.len() < 8 => Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "password: min 8 chars")),
+        Some(p) if p.len() < 8 => Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "password: min 8 chars",
+        )),
         Some(p) => Ok(Some(hash_password(&p))),
     }
 }
 
-pub async fn create(State(s): State<AppState>, Path(id): Path<i64>, Json(d): Json<DjIn>) -> ApiResult<(StatusCode, Json<Dj>)> {
-    let user = d.username.map(|u| u.trim().to_string()).filter(|u| !u.is_empty() && !u.contains(':'));
+pub async fn create(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Json(d): Json<DjIn>,
+) -> ApiResult<(StatusCode, Json<Dj>)> {
+    let user = d
+        .username
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty() && !u.contains(':'));
     let (Some(user), Some(pw)) = (user, d.password) else {
-        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "username (no ':') and password required"));
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "username (no ':') and password required",
+        ));
     };
-    let h = tokio::task::spawn_blocking(move || hash(Some(pw))).await.unwrap()?;
-    sqlx::query("SELECT 1 FROM stations WHERE id = ?").bind(id).fetch_one(&s.db).await?;
+    let h = tokio::task::spawn_blocking(move || hash(Some(pw)))
+        .await
+        .unwrap()?;
+    sqlx::query("SELECT 1 FROM stations WHERE id = ?")
+        .bind(id)
+        .fetch_one(&s.db)
+        .await?;
     let dj = sqlx::query_as(
         "INSERT INTO dj_accounts (station_id, username, password_hash, is_active) VALUES (?, ?, ?, ?)
          RETURNING id, station_id, username, is_active",
@@ -59,9 +77,15 @@ pub async fn create(State(s): State<AppState>, Path(id): Path<i64>, Json(d): Jso
 }
 
 /// Change password and/or enable/disable.
-pub async fn update(State(s): State<AppState>, Path(id): Path<i64>, Json(d): Json<DjIn>) -> ApiResult<Json<Dj>> {
+pub async fn update(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Json(d): Json<DjIn>,
+) -> ApiResult<Json<Dj>> {
     let pw = d.password;
-    let h = tokio::task::spawn_blocking(move || hash(pw)).await.unwrap()?;
+    let h = tokio::task::spawn_blocking(move || hash(pw))
+        .await
+        .unwrap()?;
     Ok(Json(
         sqlx::query_as(
             "UPDATE dj_accounts SET password_hash = COALESCE(?, password_hash), is_active = COALESCE(?, is_active)
@@ -76,6 +100,13 @@ pub async fn update(State(s): State<AppState>, Path(id): Path<i64>, Json(d): Jso
 }
 
 pub async fn remove(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<StatusCode> {
-    let r = sqlx::query("DELETE FROM dj_accounts WHERE id = ?").bind(id).execute(&s.db).await?;
-    Ok(if r.rows_affected() == 0 { StatusCode::NOT_FOUND } else { StatusCode::NO_CONTENT })
+    let r = sqlx::query("DELETE FROM dj_accounts WHERE id = ?")
+        .bind(id)
+        .execute(&s.db)
+        .await?;
+    Ok(if r.rows_affected() == 0 {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::NO_CONTENT
+    })
 }

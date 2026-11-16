@@ -28,6 +28,7 @@ Pronto (Fase 4) — **toda escrita (POST/PUT/DELETE) exige Basic Auth `admin:<RU
 - `GET|POST /api/stations/{id}/playlists` — `{name, weight?=10, type?="default", play_per?=0, play_per_hour_minute?=0, order?="shuffle"}` → mesmos campos + `id, station_id` + legado `is_jingle, jingle_interval`
   - `type`: `default` (por peso) · `once_per_x_songs` (a cada `play_per` músicas — vinheta) · `once_per_x_minutes` (a cada `play_per` min) · `once_per_hour` (no minuto `play_per_hour_minute`, janela 15 min)
   - `order`: `shuffle` (todas antes de repetir) · `random` · `sequential` (pela posição na playlist)
+  - Horários: `GET|POST /api/playlists/{id}/schedules` `{start:"22:00", end:"02:00", days?:[1..7] (Seg=1), start_date?:"YYYY-MM-DD", end_date?}` → `{id, playlist_id, start_min, end_min, days:"1234567", start_date, end_date}` · `DELETE /api/schedules/{id}`. Playlist com horário só toca dentro da janela e, dentro dela, tem prioridade sobre as sem horário do mesmo tipo. `end` < `start` atravessa a meia-noite (dias = dia em que a janela abre). Fuso: `RUSTCAST_UTC_OFFSET_MIN`.
   - Legado ainda aceito: `is_jingle:true` + `jingle_interval:N` == `type:"once_per_x_songs", play_per:N`
 - `PUT /api/playlists/{id}` (parcial, mesmos campos) · `DELETE /api/playlists/{id}` → 204
 - `GET /api/playlists/{id}/media` · `POST /api/playlists/{id}/media` `{media_id}` → 204 · `DELETE /api/playlists/{id}/media/{media_id}` → 204
