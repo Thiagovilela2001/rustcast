@@ -1,3 +1,4 @@
+pub mod analyze;
 pub mod deck;
 pub mod encoder;
 pub mod engine;

@@ -27,6 +27,9 @@ pub struct Deck {
     eof: bool,
     pub title: String,
     pub media_id: i64,
+    gain: f32,
+    /// cue-out set: stop exactly at total_frames instead of decoder EOF
+    hard_end: bool,
 }
 
 impl Deck {
@@ -74,7 +77,32 @@ impl Deck {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             media_id: 0,
+            gain: 1.0,
+            hard_end: false,
         })
+    }
+
+    /// Apply analyzer results: linear gain from dB, skip leading silence, stop at cue-out.
+    pub fn apply_cues(&mut self, gain_db: f32, cue_in_ms: i64, cue_out_ms: Option<i64>) {
+        self.gain = 10f32.powf(gain_db / 20.0);
+        let to_frames = |ms: i64| (ms.max(0) as u64) * RATE as u64 / 1000;
+        if let Some(out) = cue_out_ms.map(to_frames)
+            && out > to_frames(cue_in_ms)
+        {
+            self.total_frames = Some(out);
+            self.hard_end = true;
+        }
+        // ponytail: cue-in by decode-and-discard (leading silence is usually < 2 s); seek if that grows
+        let mut skip = to_frames(cue_in_ms);
+        let mut scratch = vec![0f32; 4096];
+        while skip > 0 {
+            let want = (skip as usize).min(scratch.len() / 2);
+            let got = self.read(&mut scratch[..want * 2]);
+            if got == 0 {
+                break;
+            }
+            skip -= got as u64;
+        }
     }
 
     pub fn remaining_frames(&self) -> Option<u64> {
@@ -83,10 +111,15 @@ impl Deck {
 
     /// Fill `buf` (interleaved stereo). Returns frames written; fewer than asked = track over.
     pub fn read(&mut self, buf: &mut [f32]) -> usize {
-        while self.out.len() < buf.len() && self.refill() {}
-        let n = buf.len().min(self.out.len());
+        let mut want = buf.len();
+        if self.hard_end {
+            want = want.min(self.remaining_frames().unwrap_or(0) as usize * 2);
+        }
+        while self.out.len() < want && self.refill() {}
+        let n = want.min(self.out.len());
+        let g = self.gain;
         for (d, s) in buf.iter_mut().zip(self.out.drain(..n)) {
-            *d = s;
+            *d = s * g;
         }
         buf[n..].fill(0.0);
         self.played += n as u64 / 2;

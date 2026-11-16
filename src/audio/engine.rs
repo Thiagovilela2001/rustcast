@@ -12,13 +12,23 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const BLOCK: usize = 1152;
+
+/// What the scheduler hands the engine.
+pub struct Track {
+    pub path: PathBuf,
+    pub title: String,
+    pub media_id: i64,
+    pub gain_db: f32,
+    pub cue_in_ms: i64,
+    pub cue_out_ms: Option<i64>,
+}
 const RESUME_FADE_SECS: f32 = 1.0;
 
 pub fn spawn(
     mount: Arc<MountPoint>,
     kbps: u32,
     crossfade_secs: f32,
-    mut next_track: impl FnMut() -> Option<(PathBuf, String, i64)> + Send + 'static,
+    mut next_track: impl FnMut() -> Option<Track> + Send + 'static,
 ) {
     std::thread::spawn(move || {
         let mut mixer = Mixer::new(crossfade_secs);
@@ -27,12 +37,13 @@ pub fn spawn(
         // Try a few paths per call so one bad file does not stall the queue.
         let mut open_next = move || {
             (0..8).find_map(|_| {
-                let (p, title, id) = next_track()?;
-                let mut d = Deck::open(&p)
-                    .map_err(|e| eprintln!("autodj: skip {}: {e}", p.display()))
+                let t = next_track()?;
+                let mut d = Deck::open(&t.path)
+                    .map_err(|e| eprintln!("autodj: skip {}: {e}", t.path.display()))
                     .ok()?;
-                d.title = title;
-                d.media_id = id;
+                d.title = t.title;
+                d.media_id = t.media_id;
+                d.apply_cues(t.gain_db, t.cue_in_ms, t.cue_out_ms);
                 Some(d)
             })
         };

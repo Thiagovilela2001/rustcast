@@ -57,6 +57,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error>> {
     let stations: Vec<Station> = sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations"))
         .fetch_all(&pool)
         .await?;
+    audio::analyze::start_worker(pool.clone(), cfg.target_lufs);
     for st in &stations {
         db::scheduler::start_autodj(pool.clone(), &mounts, st);
     }

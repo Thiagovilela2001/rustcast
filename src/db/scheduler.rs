@@ -333,6 +333,26 @@ fn weighted_order(mut v: Vec<&Playlist>, use_weight: bool) -> Vec<&Playlist> {
 }
 
 /// Spawn the AutoDJ thread for a station, fed by its scheduler. Call from inside the tokio runtime.
+/// Media row -> engine Track, with the analyzer's gain/cues (defaults until analyzed).
+async fn track(db: &SqlitePool, m: Media) -> engine::Track {
+    let (gain_db, cue_in_ms, cue_out_ms): (f64, i64, Option<i64>) =
+        sqlx::query_as("SELECT gain_db, cue_in_ms, cue_out_ms FROM media WHERE id = ?")
+            .bind(m.id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or((0.0, 0, None));
+    engine::Track {
+        path: PathBuf::from(m.file_path),
+        title: format!("{} - {}", m.artist, m.title),
+        media_id: m.id,
+        gain_db: gain_db as f32,
+        cue_in_ms,
+        cue_out_ms,
+    }
+}
+
 pub fn start_autodj(db: SqlitePool, mounts: &Mounts, st: &Station) {
     let rt = tokio::runtime::Handle::current();
     let mut sched = Scheduler::new(db.clone(), st.id);
@@ -349,11 +369,7 @@ pub fn start_autodj(db: SqlitePool, mounts: &Mounts, st: &Station) {
             if let Some(id) = forced
                 && let Ok(Some(m)) = rt.block_on(sched.forced(id))
             {
-                return Some((
-                    PathBuf::from(m.file_path),
-                    format!("{} - {}", m.artist, m.title),
-                    m.id,
-                ));
+                return Some(rt.block_on(track(&db, m)));
             }
             if Instant::now() < idle_until {
                 return None; // empty catalog: don't hit the DB every 26 ms
@@ -364,11 +380,7 @@ pub fn start_autodj(db: SqlitePool, mounts: &Mounts, st: &Station) {
                 std::sync::atomic::Ordering::SeqCst,
             );
             match picked {
-                Ok(Some(m)) => Some((
-                    PathBuf::from(m.file_path),
-                    format!("{} - {}", m.artist, m.title),
-                    m.id,
-                )),
+                Ok(Some(m)) => Some(rt.block_on(track(&db, m))),
                 other => {
                     if let Err(e) = other {
                         eprintln!("scheduler: {e}");

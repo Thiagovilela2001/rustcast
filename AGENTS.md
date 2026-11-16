@@ -41,6 +41,7 @@ Pronto (Fase 5):
 - DJ ao vivo conecta no mount da estação com `usuário:senha` da conta (ou senha mestre de source). AutoDJ pausa e retoma sozinho.
 - `GET /api/stations/{id}/history?limit=20` (público) → `[{id, media_id, artist, title, played_at (unix s), is_live, listeners, art_url|null}]`, mais novo primeiro (guarda 30 dias)
 - SSE/JSON de now playing agora tem `"next": {artist, title, art_url} | null` (próxima do AutoDJ; null ao vivo)
+- Volume uniforme + corte de silêncio: automático. Worker em segundo plano analisa cada mídia (EBU R128) após o upload; nada muda na API. Alvo `RUSTCAST_TARGET_LUFS` (padrão -16).
 - Controle do AutoDJ (admin): `POST /api/stations/{id}/skip` (próxima, fade 0,5 s) · `POST /api/stations/{id}/previous` (anterior; apertar de novo volta mais). Ambos → 204; 409 com DJ ao vivo ou sem histórico. O título novo chega pelo SSE ~0,5 s depois.
 - Frontend: tudo que não for `/api`, `/mount`, `/admin` é servido de `frontend/` (`/` → `frontend/index.html`). Em `cargo run` (debug) lê do disco — edite e dê F5, sem recompilar. Release embute no binário.
 
