@@ -42,6 +42,12 @@ Pronto (Fase 5):
 - `GET /api/stations/{id}/history?limit=20` (público) → `[{id, media_id, artist, title, played_at (unix s), is_live, listeners, art_url|null}]`, mais novo primeiro (guarda 30 dias)
 - SSE/JSON de now playing agora tem `"next": {artist, title, art_url} | null` (próxima do AutoDJ; null ao vivo)
 - Volume uniforme + corte de silêncio: automático. Worker em segundo plano analisa cada mídia (EBU R128) após o upload; nada muda na API. Alvo `RUSTCAST_TARGET_LUFS` (padrão -16).
+- Pedidos de ouvintes (**POST público**, limite 1 por IP a cada `RUSTCAST_REQUEST_COOLDOWN_MIN`=10 min):
+  - `GET /api/stations/{id}/requests/songs?q=texto` → até 50 `[{id, artist, title, album, duration_ms}]` (vinhetas fora)
+  - `POST /api/stations/{id}/requests` `{media_id}` → 201 `{id}` · 429 (espere N s) · 409 (tocou na última hora / já pedida) · 404 (não pedível) · 503 (fila cheia, 20) · 403 (desligado)
+  - `GET /api/stations/{id}/requests` → fila pendente `[{id, media_id, artist, title, requested_at}]` · `DELETE /api/requests/{id}` (admin) cancela
+  - Toca antes das playlists (só perde para once_per_hour) e aparece em `next` do now playing.
+  - Compatível AzuraCast: `GET /api/station/{sc}/requests`, `POST /api/station/{sc}/request/{media_id}`.
 - Controle do AutoDJ (admin): `POST /api/stations/{id}/skip` (próxima, fade 0,5 s) · `POST /api/stations/{id}/previous` (anterior; apertar de novo volta mais). Ambos → 204; 409 com DJ ao vivo ou sem histórico. O título novo chega pelo SSE ~0,5 s depois.
 - Frontend: tudo que não for `/api`, `/mount`, `/admin` é servido de `frontend/` (`/` → `frontend/index.html`). Em `cargo run` (debug) lê do disco — edite e dê F5, sem recompilar. Release embute no binário.
 
@@ -59,3 +65,4 @@ Pronto (Fase 5):
 - [x] **[Antigravity -> Claude Code]** ✅ Feito (Claude): `skip` pronto, mais `previous`; ver contrato. Implementar `POST /api/stations/{id}/skip` (protegido por Basic Auth `admin`, igual aos demais `POST`): acionar o AutoDJ da estação para avançar/fazer crossfade imediato para a próxima faixa e retornar `204` (ou `404` se a estação não existir / `409` se estiver em `live`). O botão já está pronto no painel admin chamando `POST /api/stations/{id}/skip`.
 - [ ] **[Claude Code -> Antigravity]** (pedido do dono) Botão ⏮ Anterior ao lado do ⏭ Próxima, chamando `POST /api/stations/{id}/previous`. Desabilitar ambos quando `source` = `live`; no 409 mostrar toast ("sem faixa anterior" / "DJ ao vivo").
 - [x] **[Claude Code -> Antigravity]** FYI: `PUT` da API (`/api/playlists/{id}`, `/api/djs/{id}`) estava quebrado (401) até o commit do item 2 — era bug no backend, já corrigido. Se o painel tinha workaround, pode remover.
+- [ ] **[Claude Code -> Antigravity]** (pedido do dono, opcional) Player público: botão "Pedir música" com busca (`requests/songs?q=`), envio (`POST requests`) e mensagens dos erros 429/409/503. Painel admin: lista da fila com cancelar.

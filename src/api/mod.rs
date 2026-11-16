@@ -3,6 +3,7 @@ pub mod djs;
 pub mod media;
 pub mod nowplaying;
 pub mod playlists;
+pub mod requests;
 
 use crate::db::models::{STATION_COLS, Station};
 use crate::db::scheduler::start_autodj;
@@ -25,12 +26,19 @@ pub struct AppState {
     pub admin_password: String,
     /// e.g. https://radio.blackmesa.works — used for absolute URLs in AzuraCast-compatible JSON.
     pub public_url: String,
+    pub requests_enabled: bool,
+    pub request_cooldown_secs: i64,
+    pub limiter: std::sync::Arc<requests::Limiter>,
 }
 
 pub struct ApiError(StatusCode, String);
 pub type ApiResult<T> = Result<T, ApiError>;
 
 impl ApiError {
+    pub fn parts(self) -> (StatusCode, String) {
+        (self.0, self.1)
+    }
+
     pub fn new(code: StatusCode, msg: impl Into<String>) -> Self {
         Self(code, msg.into())
     }
@@ -95,6 +103,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/stations/{id}/nowplaying", get(nowplaying::sse))
         .route("/api/stations/{id}/nowplaying.json", get(nowplaying::json))
         .route("/api/stations/{id}/history", get(nowplaying::history))
+        .route("/api/stations/{id}/requests", get(requests::pending).post(requests::create))
+        .route("/api/stations/{id}/requests/songs", get(requests::songs))
+        .route("/api/requests/{id}", delete(requests::cancel))
+        .route("/api/station/{station}/requests", get(requests::az_list))
+        .route("/api/station/{station}/request/{media_id}", post(requests::az_request).get(requests::az_request))
         .route("/api/stations/{id}/skip", post(skip))
         .route("/api/stations/{id}/previous", post(previous))
         .route("/api/nowplaying", get(azuracast::all))
@@ -110,7 +123,12 @@ async fn require_admin(State(s): State<AppState>, req: Request, next: Next) -> R
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
-    let private = req.method() != Method::GET || req.uri().path().ends_with("/djs");
+    let path = req.uri().path();
+    // listener requests are the only public writes (rate-limited in requests.rs)
+    let public_write = req.method() == Method::POST
+        && ((path.starts_with("/api/stations/") && path.ends_with("/requests"))
+            || (path.starts_with("/api/station/") && path.contains("/request/")));
+    let private = (req.method() != Method::GET && !public_write) || path.ends_with("/djs");
     if private && !check_basic(auth, &s.admin_password) {
         return (
             StatusCode::UNAUTHORIZED,

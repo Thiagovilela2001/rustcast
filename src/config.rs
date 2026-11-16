@@ -10,6 +10,8 @@ pub struct Config {
     pub public_url: String,
     pub cors_origin: Option<String>,
     pub utc_offset_min: i64,
+    pub requests_enabled: bool,
+    pub request_cooldown_min: i64,
     pub target_lufs: f64,
 }
 
@@ -30,6 +32,8 @@ impl Config {
                 .trim_end_matches('/')
                 .to_string(),
             target_lufs: var("RUSTCAST_TARGET_LUFS", "-16").parse().unwrap_or(-16.0),
+            requests_enabled: var("RUSTCAST_REQUESTS", "1") != "0",
+            request_cooldown_min: var("RUSTCAST_REQUEST_COOLDOWN_MIN", "10").parse().unwrap_or(10).max(0),
             utc_offset_min: var("RUSTCAST_UTC_OFFSET_MIN", "0").parse().unwrap_or(0),
             cors_origin: env::var("RUSTCAST_CORS_ORIGIN")
                 .ok()

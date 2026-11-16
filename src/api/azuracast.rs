@@ -17,7 +17,7 @@ async fn station(s: &AppState, key: &str) -> ApiResult<Station> {
     .await?)
 }
 
-fn song(base: &str, id: i64, text: &str, media: Option<&Media>) -> Value {
+pub(crate) fn song(base: &str, id: i64, text: &str, media: Option<&Media>) -> Value {
     let (artist, title) = match media {
         Some(md) => (md.artist.clone(), md.title.clone()),
         None => text

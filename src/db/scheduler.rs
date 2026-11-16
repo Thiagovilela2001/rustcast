@@ -152,6 +152,13 @@ impl Scheduler {
         };
         // AzuraCast priority: per type, scheduled-and-active playlists first, then unscheduled ones.
         for ty in TYPES_BY_PRIORITY {
+            if ty == "once_per_x_songs"
+                && let Some(m) = self.take_request(now).await?
+            {
+                self.bump_since(&pls, None);
+                self.played_push(&m, true);
+                return Ok(Some(m));
+            }
             for scheduled in [true, false] {
                 let due: Vec<&Playlist> = pls
                     .iter()
@@ -195,6 +202,24 @@ impl Scheduler {
             self.played_push(m, true);
         }
         Ok(m)
+    }
+
+    /// Oldest pending listener request (marked played when picked; it shows up as "next").
+    async fn take_request(&mut self, now: i64) -> sqlx::Result<Option<Media>> {
+        let cols = MEDIA_COLS.split(", ").map(|c| format!("m.{c}")).collect::<Vec<_>>().join(", ");
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT r.id FROM song_requests r JOIN media m ON m.id = r.media_id
+             WHERE r.station_id = ? AND r.played_at IS NULL ORDER BY r.requested_at, r.id LIMIT 1",
+        )
+        .bind(self.station_id)
+        .fetch_optional(&self.db)
+        .await?;
+        let Some((rid,)) = row else { return Ok(None) };
+        sqlx::query("UPDATE song_requests SET played_at = ? WHERE id = ?").bind(now).bind(rid).execute(&self.db).await?;
+        sqlx::query_as(sql!("SELECT {cols} FROM media m JOIN song_requests r ON r.media_id = m.id WHERE r.id = ?"))
+            .bind(rid)
+            .fetch_optional(&self.db)
+            .await
     }
 
     /// One more song played: every playlist's counter +1 (new ones start at 1), the chosen one back to 0.

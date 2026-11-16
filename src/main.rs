@@ -12,7 +12,6 @@ mod web;
 
 use db::models::{STATION_COLS, Station};
 use hyper_util::rt::TokioIo;
-use hyper_util::service::TowerToHyperService;
 use relay::{RelayState, mountpoint::Mounts, source_handler};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,6 +73,9 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error>> {
             media_dir: cfg.media_dir.into(),
             admin_password: cfg.admin_password,
             public_url: cfg.public_url,
+            requests_enabled: cfg.requests_enabled,
+            request_cooldown_secs: cfg.request_cooldown_min * 60,
+            limiter: Default::default(),
         }))
         .fallback(web::serve);
     let app = match cfg.cors_origin {
@@ -92,14 +94,18 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error>> {
 
     // Own accept loop: Icecast `SOURCE`/`PUT` sources go raw, everything else to hyper/axum.
     loop {
-        let (sock, _) = listener.accept().await?;
+        let (sock, peer) = listener.accept().await?;
         let (app, state) = (app.clone(), relay_state.clone());
         tokio::spawn(async move {
             if source_handler::is_source(&sock).await {
                 let _ = source_handler::handle_source(sock, state.mounts, state.db, state.password)
                     .await;
             } else {
-                let svc = TowerToHyperService::new(app);
+                // hand the peer IP to handlers (listener requests rate limit)
+                let svc = hyper::service::service_fn(move |mut req: hyper::Request<hyper::body::Incoming>| {
+                    req.extensions_mut().insert(api::requests::Peer(peer.ip()));
+                    tower::ServiceExt::oneshot(app.clone(), req)
+                });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(sock), svc)
                     .await;
