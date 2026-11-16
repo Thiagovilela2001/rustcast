@@ -23,8 +23,7 @@
   const trackTitle = document.getElementById('trackTitle');
   const trackArtist = document.getElementById('trackArtist');
   const playerStatus = document.getElementById('playerStatus');
-  const listenTimer = document.getElementById('listenTimer');
-  const sseStatus = document.getElementById('sseStatus');
+  const listenTimer = document.getElementById('listenTimer');
 
   const historyCard = document.getElementById('historyCard');
   const historyList = document.getElementById('historyList');
@@ -180,8 +179,8 @@
 
   function renderNowPlaying(np) {
     if (!np) return;
-    const title = np.title || 'Sem título';
-    const artist = np.artist || 'RustCast';
+    const title = np.title || '';
+    const artist = np.artist || '';
     trackTitle.textContent = title;
     trackArtist.textContent = artist;
     listenersCount.textContent = Number.isFinite(np.listeners) ? np.listeners : 0;
@@ -210,34 +209,27 @@
       showFallbackCover();
     }
 
-    if (np.title) {
-      document.title = `${np.title} — ${artist}`;
-    }
+    document.title = np.title ? `${np.title}${artist ? ' — ' + artist : ''}` : 'BLACKMESA Fm';
   }
 
   function connectSse(stationId) {
     if (eventSource) {
       eventSource.close();
       eventSource = null;
-    }
-
-    sseStatus.textContent = 'SSE: conectando';
+    }
     eventSource = new EventSource(`/api/stations/${stationId}/nowplaying`);
 
-    eventSource.onopen = () => {
-      sseStatus.textContent = 'SSE: ativo';
+    eventSource.onopen = () => {
     };
 
     eventSource.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        renderNowPlaying(data);
-        sseStatus.textContent = 'SSE: ativo';
+        renderNowPlaying(data);
       } catch (_) {}
     };
 
-    eventSource.onerror = () => {
-      sseStatus.textContent = 'SSE: reconectando...';
+    eventSource.onerror = () => {
     };
   }
 
@@ -282,15 +274,15 @@
 
   async function startStream() {
     initAudioVisualizer();
-    playerStatus.textContent = 'Sintonizando...';
+    playerStatus.textContent = '';
     audio.src = `/mount/${currentMount}?t=${Date.now()}`;
     try {
       await audio.play();
       setPlayingUi(true);
-      playerStatus.textContent = 'No ar';
+      playerStatus.textContent = '';
     } catch (_) {
       setPlayingUi(false);
-      playerStatus.textContent = 'Clique em Play para ouvir';
+      playerStatus.textContent = '';
     }
   }
 
@@ -299,7 +291,7 @@
     audio.removeAttribute('src');
     audio.load();
     setPlayingUi(false);
-    playerStatus.textContent = 'Pausado';
+    playerStatus.textContent = '';
   }
 
   playBtn.addEventListener('click', () => {
@@ -309,17 +301,17 @@
 
   audio.addEventListener('playing', () => {
     setPlayingUi(true);
-    playerStatus.textContent = 'No ar';
+    playerStatus.textContent = '';
   });
 
   audio.addEventListener('waiting', () => {
-    if (isPlaying) playerStatus.textContent = 'Buffering...';
+    
   });
 
   audio.addEventListener('error', () => {
     if (isPlaying) {
       setPlayingUi(false);
-      playerStatus.textContent = 'Sinal indisponível — tente novamente';
+      playerStatus.textContent = '';
     }
   });
 
@@ -338,11 +330,10 @@
     const url = `${window.location.origin}/mount/${currentMount}`;
     try {
       await navigator.clipboard.writeText(url);
-      const prev = shareBtn.textContent;
-      shareBtn.textContent = 'Copiado!';
-      setTimeout(() => { shareBtn.textContent = prev; }, 1800);
+      shareBtn.classList.add('is-copied');
+      setTimeout(() => shareBtn.classList.remove('is-copied'), 1600);
     } catch (_) {
-      prompt('Link direto do stream:', url);
+      prompt('Link do stream:', url);
     }
   });
 

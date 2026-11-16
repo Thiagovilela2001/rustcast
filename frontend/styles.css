@@ -900,20 +900,26 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cover-disc { animation: none; }
 .cover-fallback { background: radial-gradient(circle at center, rgba(255,128,0,.18), transparent 3px), repeating-radial-gradient(circle at center, #1a1a1a 0 5px, #111 6px 8px); }
 .cover-fallback svg { width: 34%; height: 34%; }
+.cover-fallback-logo { width: 46%; height: auto; object-fit: contain; }
 .visualizer-wrap { height: 48px; padding: 0; background: transparent; border: 0; }
 #visualizer { height: 48px; }
 .track-info { grid-column: 2; align-self: end; text-align: left; position: relative; z-index: 1; }
-.track-info::before { content: "TOCANDO AGORA"; display: block; margin-bottom: 13px; color: var(--accent); font: 800 .65rem/1 var(--mono); letter-spacing: .14em; }
 .track-title { max-width: 12ch; font-family: var(--font-display); font-weight: 400; font-size: clamp(2.15rem,4.2vw,4.6rem); line-height: .96; letter-spacing: -.02em; }
-.track-artist { margin-top: 14px; }
-.player-controls { grid-column: 2; align-self: start; display: grid; grid-template-columns: auto 1fr; gap: 16px; background: transparent; border: 0; padding: 0; position: relative; z-index: 1; }
+.track-artist { margin-top: 14px; color: var(--text-muted); }
+.player-controls { grid-column: 2; align-self: start; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; background: transparent; border: 0; padding: 0; position: relative; z-index: 1; }
 .play-btn { width: 66px; height: 66px; background: var(--accent); color: #0d0d0d; box-shadow: 0 12px 32px rgba(255,128,0,.2); }
 .play-btn:hover { background: var(--accent-hover); transform: scale(1.04); }
-#shareBtn { grid-column: 1 / -1; justify-self: start; }
-.player-footer { grid-column: 1 / -1; padding-top: 18px; border-top: 1px solid var(--border); }
+.icon-btn { width: 42px; height: 42px; display: inline-grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; color: var(--text); cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .1s ease; }
+.icon-btn:hover { background: rgba(244,243,238,.07); border-color: var(--border-strong); }
+.icon-btn:active { transform: scale(.94); }
+.icon-btn.is-copied { color: var(--accent); border-color: var(--accent); }
+.player-footer { grid-column: 1 / -1; padding-top: 18px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; min-height: 16px; }
+.player-footer #playerStatus:empty { display: none; }
 .player-footer #listenTimer { margin-left: auto; }
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+.on-air-sign { padding: 7px; border: 0; background: transparent; }
+.on-air-sign > span:not(.led) { display: none; }
 .history-card { grid-column: 2; grid-row: 2; align-self: stretch; width: 100%; max-width: none; min-height: 590px; margin: 0; padding: 26px; border-radius: 0; background: rgba(16,16,16,.74); }
-.history-title { margin-bottom: 22px; font-size: .72rem; letter-spacing: .14em; }
 .history-item { padding: 15px 0; }
 
 /* ---------- Admin ---------- */
