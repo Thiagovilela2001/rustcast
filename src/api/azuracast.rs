@@ -15,6 +15,26 @@ async fn station(s: &AppState, key: &str) -> ApiResult<Station> {
         .await?)
 }
 
+fn song(base: &str, id: i64, text: &str, media: Option<&Media>) -> Value {
+    let (artist, title) = match media {
+        Some(md) => (md.artist.clone(), md.title.clone()),
+        None => text.split_once(" - ").map_or((String::new(), text.to_string()), |(a, t)| (a.into(), t.into())),
+    };
+    json!({
+        "id": id.to_string(), "text": if artist.is_empty() { title.clone() } else { format!("{artist} - {title}") },
+        "artist": artist, "title": title, "album": media.and_then(|md| md.album.clone()).unwrap_or_default(),
+        "genre": "", "isrc": "", "lyrics": "", "custom_fields": [],
+        "art": format!("{base}/api/media/{id}/art?fallback=1")
+    })
+}
+
+async fn media_by_id(s: &AppState, id: i64) -> Option<Media> {
+    if id <= 0 {
+        return None;
+    }
+    sqlx::query_as(sql!("SELECT {MEDIA_COLS} FROM media WHERE id = ?")).bind(id).fetch_optional(&s.db).await.ok().flatten()
+}
+
 async fn np(s: &AppState, st: &Station) -> Value {
     let m = s.mounts.get_or_create(&st.mountpoint);
     let base = &s.public_url;
@@ -38,6 +58,25 @@ async fn np(s: &AppState, st: &Station) -> Value {
     let duration = media.as_ref().map_or(0, |md| md.duration_ms / 1000);
     let elapsed = if started > 0 { (now - started).max(0) } else { 0 };
     let elapsed = if duration > 0 { elapsed.min(duration) } else { elapsed };
+    let next_id = m.next_up.load(Ordering::SeqCst);
+    let playing_next = match (live, media_by_id(s, next_id).await) {
+        (false, Some(md)) => json!({
+            "cued_at": now, "played_at": started + duration, "duration": md.duration_ms / 1000, "playlist": "", "is_request": false,
+            "song": song(base, md.id, "", Some(&md)),
+        }),
+        _ => Value::Null,
+    };
+    // last 5 before the current one
+    let rows = crate::db::history::recent(&s.db, st.id, 6).await.unwrap_or_default();
+    let mut song_history = Vec::new();
+    for r in rows.iter().skip(1) {
+        let md = match r.media_id { Some(mid) => media_by_id(s, mid).await, None => None };
+        song_history.push(json!({
+            "sh_id": r.id, "played_at": r.played_at, "duration": md.as_ref().map_or(0, |x| x.duration_ms / 1000),
+            "playlist": "", "streamer": if r.is_live { r.text.as_str() } else { "" }, "is_request": false,
+            "song": song(base, r.media_id.unwrap_or(0), &r.text, md.as_ref()),
+        }));
+    }
     let n = m.listeners();
     let listeners = json!({ "total": n, "unique": n, "current": n });
     let path = format!("/listen/{}/radio.mp3", st.mountpoint);
@@ -61,7 +100,7 @@ async fn np(s: &AppState, st: &Station) -> Value {
                 "art": format!("{base}/api/media/{id}/art?fallback=1")
             }
         },
-        "playing_next": null, "song_history": [], "is_online": true, "cache": null
+        "playing_next": playing_next, "song_history": song_history, "is_online": true, "cache": null
     })
 }
 

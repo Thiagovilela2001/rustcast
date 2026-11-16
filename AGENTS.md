@@ -35,6 +35,8 @@ Pronto (Fase 5):
 - `GET /api/stations/{id}/nowplaying.json` — mesmo payload, sem SSE
 - DJs (**GET também exige admin**): `GET|POST /api/stations/{id}/djs` `{username, password(min 8), is_active?}` → `{id, station_id, username, is_active}` · `PUT /api/djs/{id}` `{password?, is_active?}` · `DELETE /api/djs/{id}`
 - DJ ao vivo conecta no mount da estação com `usuário:senha` da conta (ou senha mestre de source). AutoDJ pausa e retoma sozinho.
+- `GET /api/stations/{id}/history?limit=20` (público) → `[{id, media_id, artist, title, played_at (unix s), is_live, listeners, art_url|null}]`, mais novo primeiro (guarda 30 dias)
+- SSE/JSON de now playing agora tem `"next": {artist, title, art_url} | null` (próxima do AutoDJ; null ao vivo)
 - Controle do AutoDJ (admin): `POST /api/stations/{id}/skip` (próxima, fade 0,5 s) · `POST /api/stations/{id}/previous` (anterior; apertar de novo volta mais). Ambos → 204; 409 com DJ ao vivo ou sem histórico. O título novo chega pelo SSE ~0,5 s depois.
 - Frontend: tudo que não for `/api`, `/mount`, `/admin` é servido de `frontend/` (`/` → `frontend/index.html`). Em `cargo run` (debug) lê do disco — edite e dê F5, sem recompilar. Release embute no binário.
 

@@ -64,6 +64,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/djs/{id}", axum::routing::put(djs::update).delete(djs::remove))
         .route("/api/stations/{id}/nowplaying", get(nowplaying::sse))
         .route("/api/stations/{id}/nowplaying.json", get(nowplaying::json))
+        .route("/api/stations/{id}/history", get(nowplaying::history))
         .route("/api/stations/{id}/skip", post(skip))
         .route("/api/stations/{id}/previous", post(previous))
         .route("/api/nowplaying", get(azuracast::all))

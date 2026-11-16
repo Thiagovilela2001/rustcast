@@ -27,6 +27,8 @@ pub struct MountPoint {
     pub requeue: Mutex<VecDeque<i64>>,
     /// Media ids announced on air, newest last (back stack for "previous").
     pub history: Mutex<VecDeque<i64>>,
+    /// AutoDJ lookahead media id (0 = unknown).
+    pub next_up: AtomicI64,
 }
 
 impl MountPoint {
@@ -42,6 +44,7 @@ impl MountPoint {
             skip: AtomicBool::new(false),
             requeue: Mutex::default(),
             history: Mutex::default(),
+            next_up: AtomicI64::new(0),
         }
     }
 

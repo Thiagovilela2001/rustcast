@@ -16,12 +16,15 @@ pub struct Scheduler {
     station_id: i64,
     recent: VecDeque<String>,
     played: VecDeque<i64>,
+    /// Next track, picked one ahead so "playing next" is known. Only one Media kept in RAM.
+    lookahead: Option<Media>,
+    loaded: bool,
     since_jingle: i64,
 }
 
 impl Scheduler {
     pub fn new(db: SqlitePool, station_id: i64) -> Self {
-        Self { db, station_id, recent: VecDeque::new(), played: VecDeque::new(), since_jingle: 0 }
+        Self { db, station_id, recent: VecDeque::new(), played: VecDeque::new(), lookahead: None, loaded: false, since_jingle: 0 }
     }
 
     /// Fetch a specific track (admin "previous"); it still counts in the shuffle history.
@@ -37,7 +40,45 @@ impl Scheduler {
         Ok(m)
     }
 
+    /// Track to play now; the one after it becomes `peek()`.
     pub async fn next(&mut self) -> sqlx::Result<Option<Media>> {
+        if !self.loaded {
+            self.load_history().await?;
+        }
+        let now = match self.lookahead.take() {
+            Some(m) => Some(m),
+            None => self.pick().await?,
+        };
+        self.lookahead = self.pick().await?;
+        Ok(now)
+    }
+
+    pub fn peek(&self) -> Option<&Media> {
+        self.lookahead.as_ref()
+    }
+
+    /// Restore shuffle + artist rotation from the DB so a restart doesn't replay recent tracks.
+    async fn load_history(&mut self) -> sqlx::Result<()> {
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT h.media_id, m.artist FROM song_history h JOIN media m ON m.id = h.media_id
+             WHERE h.station_id = ? AND h.is_live = 0 ORDER BY h.played_at DESC, h.id DESC LIMIT ?",
+        )
+        .bind(self.station_id)
+        .bind(HISTORY as i64)
+        .fetch_all(&self.db)
+        .await?;
+        for (id, artist) in rows.iter().rev() {
+            self.played.push_back(*id);
+            self.recent.push_back(artist.clone());
+            if self.recent.len() > NO_REPEAT_ARTISTS {
+                self.recent.pop_front();
+            }
+        }
+        self.loaded = true;
+        Ok(())
+    }
+
+    async fn pick(&mut self) -> sqlx::Result<Option<Media>> {
         let pls: Vec<Playlist> = sqlx::query_as(sql!(
             "SELECT {PLAYLIST_COLS} FROM playlists p WHERE station_id = ? AND EXISTS (SELECT 1 FROM playlist_media pm WHERE pm.playlist_id = p.id)"
         ))
@@ -116,9 +157,10 @@ fn pick_weighted<'a>(pls: impl Iterator<Item = &'a Playlist>) -> Option<i64> {
 /// Spawn the AutoDJ thread for a station, fed by its scheduler. Call from inside the tokio runtime.
 pub fn start_autodj(db: SqlitePool, mounts: &Mounts, st: &Station) {
     let rt = tokio::runtime::Handle::current();
-    let mut sched = Scheduler::new(db, st.id);
+    let mut sched = Scheduler::new(db.clone(), st.id);
     let mut idle_until = Instant::now();
     let mount = mounts.get_or_create(&st.mountpoint);
+    super::history::start_recorder(db.clone(), mount.clone(), st.id);
     let ctl = mount.clone();
     engine::spawn(mount, st.bitrate as u32, st.crossfade_secs as f32, move || {
         let forced = ctl.requeue.lock().unwrap().pop_front();
@@ -130,7 +172,9 @@ pub fn start_autodj(db: SqlitePool, mounts: &Mounts, st: &Station) {
         if Instant::now() < idle_until {
             return None; // empty catalog: don't hit the DB every 26 ms
         }
-        match rt.block_on(sched.next()) {
+        let picked = rt.block_on(sched.next());
+        ctl.next_up.store(sched.peek().map_or(0, |m| m.id), std::sync::atomic::Ordering::SeqCst);
+        match picked {
             Ok(Some(m)) => Some((PathBuf::from(m.file_path), format!("{} - {}", m.artist, m.title), m.id)),
             other => {
                 if let Err(e) = other {
