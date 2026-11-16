@@ -76,6 +76,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error>> {
             requests_enabled: cfg.requests_enabled,
             request_cooldown_secs: cfg.request_cooldown_min * 60,
             limiter: Default::default(),
+            sessions: Default::default(),
         }))
         .fallback(web::serve);
     let app = match cfg.cors_origin {

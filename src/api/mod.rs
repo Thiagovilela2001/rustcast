@@ -16,7 +16,9 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -29,6 +31,8 @@ pub struct AppState {
     pub requests_enabled: bool,
     pub request_cooldown_secs: i64,
     pub limiter: std::sync::Arc<requests::Limiter>,
+    /// Sessões de admin (token -> expira em unix secs). Login por formulário, sem modal nativo.
+    pub sessions: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 pub struct ApiError(StatusCode, String);
@@ -113,30 +117,109 @@ pub fn router(state: AppState) -> Router {
         .route("/api/nowplaying", get(azuracast::all))
         .route("/api/nowplaying/{station}", get(azuracast::one))
         .route("/api/nowplaying_static/{station}", get(azuracast::one))
+        .route("/api/admin/login", post(admin_login))
+        .route("/api/admin/logout", post(admin_logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin))
         .with_state(state)
 }
 
-/// Reads are public (player needs them), except DJ accounts; every write needs Basic Auth `admin:<RUSTCAST_ADMIN_PASSWORD>`.
+/// Reads are public (player needs them), except DJ accounts; every write needs auth.
+/// Auth aceita: Basic `admin:<RUSTCAST_ADMIN_PASSWORD>` OU cookie de sessão (login por formulário).
 async fn require_admin(State(s): State<AppState>, req: Request, next: Next) -> Response {
-    let auth = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-    let path = req.uri().path();
+    let path = req.uri().path().to_string();
+
+    // Login/logout são públicos (o próprio handler valida a senha).
+    if path == "/api/admin/login" || path == "/api/admin/logout" {
+        return next.run(req).await;
+    }
+
     // listener requests are the only public writes (rate-limited in requests.rs)
     let public_write = req.method() == Method::POST
         && ((path.starts_with("/api/stations/") && path.ends_with("/requests"))
             || (path.starts_with("/api/station/") && path.contains("/request/")));
     let private = (req.method() != Method::GET && !public_write) || path.ends_with("/djs");
-    if private && !check_basic(auth, &s.admin_password) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Basic realm=\"rustcast\"")],
-        )
-            .into_response();
+
+    if !private {
+        return next.run(req).await;
     }
-    next.run(req).await
+
+    // 1) Basic Auth (clientes legados / API)
+    let auth = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if check_basic(auth, &s.admin_password) {
+        return next.run(req).await;
+    }
+
+    // 2) Cookie de sessão (login pelo navegador)
+    if let Some(cookie) = req.headers().get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = cookie.split(';').filter_map(|c| c.trim().strip_prefix("rustcast_session=")).next() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let valid = s.sessions.lock().unwrap().get(token).is_some_and(|exp| *exp > now);
+            if valid {
+                return next.run(req).await;
+            }
+        }
+    }
+
+    StatusCode::UNAUTHORIZED.into_response()
+}
+
+#[derive(Deserialize)]
+struct LoginIn {
+    password: String,
+}
+
+/// POST /api/admin/login — valida a senha e cria uma sessão (cookie HttpOnly).
+async fn admin_login(State(s): State<AppState>, Json(body): Json<LoginIn>) -> Response {
+    if body.password != s.admin_password {
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "senha incorreta" }))).into_response();
+    }
+    let token = format!("{}", uuid_like());
+    let exp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64 + 7 * 24 * 3600)
+        .unwrap_or(0);
+    s.sessions.lock().unwrap().insert(token.clone(), exp);
+    let cookie = format!("rustcast_session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age={}", token, 7 * 24 * 3600);
+    (
+        StatusCode::OK,
+        [(header::SET_COOKIE, cookie)],
+        Json(serde_json::json!({ "ok": true })),
+    )
+        .into_response()
+}
+
+/// POST /api/admin/logout — remove a sessão atual.
+async fn admin_logout(State(s): State<AppState>, req: Request) -> Response {
+    if let Some(cookie) = req.headers().get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = cookie.split(';').filter_map(|c| c.trim().strip_prefix("rustcast_session=")).next() {
+            s.sessions.lock().unwrap().remove(token);
+        }
+    }
+    (
+        StatusCode::OK,
+        [(header::SET_COOKIE, "rustcast_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")],
+        Json(serde_json::json!({ "ok": true })),
+    )
+        .into_response()
+}
+
+fn uuid_like() -> String {
+    let mut buf = [0u8; 32];
+    let mut out = String::with_capacity(64);
+    // token simples: 32 bytes hex via fastrand (sem dependência extra)
+    for b in buf.iter_mut() {
+        *b = fastrand::u8(..);
+    }
+    for b in buf {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
 }
 
 async fn station_mount(

@@ -87,6 +87,7 @@
   }
 
   function logout(msg) {
+    fetch('/api/admin/logout', { method: 'POST' }).catch(() => {});
     authHeader = '';
     sessionStorage.removeItem(STORAGE_KEY);
     if (npSourceSse) {
@@ -103,7 +104,6 @@
 
   async function api(path, options = {}) {
     const headers = new Headers(options.headers || {});
-    if (authHeader) headers.set('Authorization', authHeader);
 
     const res = await fetch(path, { ...options, headers });
     if (res.status === 401) {
@@ -128,14 +128,30 @@
   loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     loginError.classList.add('hidden');
-    const user = (document.getElementById('loginUser')?.value || 'admin').trim();
-    const candidate = makeBasicAuth(user, loginPass.value);
     try {
-      const list = await fetch('/api/stations').then((r) => r.json());
-      const checkId = (Array.isArray(list) && list.length > 0) ? list[0].id : 1;
-      const check = await fetch(`/api/stations/${checkId}/djs`, {
-        headers: { Authorization: candidate },
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: loginPass.value }),
       });
+      if (res.status === 401) {
+        loginError.textContent = 'Senha incorreta.';
+        loginError.classList.remove('hidden');
+        return;
+      }
+      if (!res.ok) {
+        loginError.textContent = 'Falha ao entrar.';
+        loginError.classList.remove('hidden');
+        return;
+      }
+      authHeader = '';
+      loginPass.value = '';
+      await enterApp();
+    } catch (err) {
+      loginError.textContent = 'Falha ao conectar: ' + err.message;
+      loginError.classList.remove('hidden');
+    }
+  });
       if (check.status === 401) {
         loginError.textContent = 'Senha incorreta.';
         loginError.classList.remove('hidden');
