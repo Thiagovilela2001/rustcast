@@ -1,0 +1,43 @@
+CREATE TABLE stations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    mountpoint TEXT NOT NULL UNIQUE,
+    bitrate INTEGER NOT NULL DEFAULT 128,
+    crossfade_secs REAL NOT NULL DEFAULT 4.0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    album TEXT,
+    duration_ms INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE playlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    weight INTEGER NOT NULL DEFAULT 10,
+    is_jingle BOOLEAN NOT NULL DEFAULT 0,
+    jingle_interval INTEGER DEFAULT 0
+);
+
+CREATE TABLE playlist_media (
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (playlist_id, media_id)
+);
+
+CREATE TABLE dj_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 1
+);

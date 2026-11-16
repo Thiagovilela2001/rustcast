@@ -1,0 +1,51 @@
+# RustCast — divisão de trabalho entre agentes
+
+Plano: `rustcast_implementation_plan.md`. Este arquivo é lido pelo Claude Code e pelo Antigravity.
+
+## Donos (um dono por pasta — não editar pasta alheia)
+
+| Pasta / arquivo | Dono | Escopo |
+| --- | --- | --- |
+| `src/**`, `Cargo.toml`, `migrations/**` | **Claude Code** | Relay, ICY, Audio Engine, DB, API REST/SSE, `rust-embed` |
+| `frontend/**` | **Antigravity** | Painel admin + player público (HTML/JS/CSS estático, sem build step) |
+| `AGENTS.md` | ambos | Só para mudar contrato/status. Avise na seção "Pedidos" |
+
+Precisa de algo na pasta do outro? Escreva em **Pedidos** abaixo, não edite.
+
+## Contrato de API (fonte da verdade para o frontend)
+
+Base: `http://127.0.0.1:8000`. Frontend é servido pelo próprio binário em `/` (Fase 5), então use caminhos relativos.
+
+Pronto (Fases 1–2):
+- `GET /mount/{name}` — stream áudio (`audio/mpeg`). Use em `<audio src="/mount/radio">`.
+- `GET /admin/metadata?mount=/radio&mode=updinfo&song=Artista%20-%20Faixa` — Basic Auth `source:<senha>`.
+- Ingestão: `PUT` ou `SOURCE` em `/mount/{name}` (Basic Auth). Ex.: `ffmpeg -re -i x.mp3 -c:a libmp3lame -content_type audio/mpeg -f mp3 icecast://source:hackme@127.0.0.1:8000/mount/radio`
+
+Pronto (Fase 4) — **toda escrita (POST/PUT/DELETE) exige Basic Auth `admin:<RUSTCAST_ADMIN_PASSWORD>`** (padrão `admin`). GET é público. Erros: `{"error": "..."}` com 401/404/409/422.
+- `GET /api/stations` → `[{id, name, mountpoint, bitrate, crossfade_secs}]` · `POST` `{name, mountpoint, bitrate?, crossfade_secs?}` → 201 (sobe AutoDJ da estação na hora)
+- `GET /api/stations/{id}/media` → `[{id, station_id, title, artist, album, duration_ms}]` · `POST` multipart campo `file` → 201 / 422 se não for áudio
+- `DELETE /api/media/{id}` → 204 · `GET /api/media/{id}/art` → imagem ou 404 (use fallback no `<img onerror>`)
+- `GET|POST /api/stations/{id}/playlists` — `{name, weight?=10, is_jingle?=false, jingle_interval?=0}` → `{id, station_id, name, weight, is_jingle, jingle_interval}`
+- `PUT /api/playlists/{id}` (parcial, mesmos campos) · `DELETE /api/playlists/{id}` → 204
+- `GET /api/playlists/{id}/media` · `POST /api/playlists/{id}/media` `{media_id}` → 204 · `DELETE /api/playlists/{id}/media/{media_id}` → 204
+- Regras do AutoDJ: playlist sorteada por peso; vinheta (`is_jingle`) a cada `jingle_interval` músicas; sem playlists → catálogo todo; evita repetir os últimos 3 artistas.
+
+Pronto (Fase 5):
+- `GET /api/stations/{id}/nowplaying` — SSE (`new EventSource(...)`), evento `data: {"title","artist","art_url"|null,"listeners","source":"autodj"|"live"}`; 1º evento na conexão, depois a cada troca de faixa e a cada 5 s
+- `GET /api/stations/{id}/nowplaying.json` — mesmo payload, sem SSE
+- DJs (**GET também exige admin**): `GET|POST /api/stations/{id}/djs` `{username, password(min 8), is_active?}` → `{id, station_id, username, is_active}` · `PUT /api/djs/{id}` `{password?, is_active?}` · `DELETE /api/djs/{id}`
+- DJ ao vivo conecta no mount da estação com `usuário:senha` da conta (ou senha mestre de source). AutoDJ pausa e retoma sozinho.
+- Frontend: tudo que não for `/api`, `/mount`, `/admin` é servido de `frontend/` (`/` → `frontend/index.html`). Em `cargo run` (debug) lê do disco — edite e dê F5, sem recompilar. Release embute no binário.
+
+## Status
+
+- [x] Fase 1 Relay — Claude
+- [x] Fase 2 ICY + SOURCE/PUT legado — Claude (falta teste manual com Mixxx/BUTT real)
+- [x] Fase 3 Audio Engine — Claude
+- [x] Fase 4 DB + API — Claude (SQLite em `storage/rustcast.db`; estação padrão `radio` criada no 1º boot)
+- [x] Fase 5 backend (handover, contas DJ, SSE, servir `frontend/`) — Claude
+- [ ] Fase 5 frontend (painel admin + player público) + teste no browser — **Antigravity**
+
+## Pedidos
+
+(vazio)
