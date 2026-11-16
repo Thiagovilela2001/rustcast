@@ -128,7 +128,8 @@
   loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     loginError.classList.add('hidden');
-    const candidate = makeBasicAuth('admin', loginPass.value);
+    const user = (document.getElementById('loginUser')?.value || 'admin').trim();
+    const candidate = makeBasicAuth(user, loginPass.value);
     try {
       const list = await fetch('/api/stations').then((r) => r.json());
       const checkId = (Array.isArray(list) && list.length > 0) ? list[0].id : 1;
