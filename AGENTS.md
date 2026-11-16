@@ -35,6 +35,7 @@ Pronto (Fase 5):
 - `GET /api/stations/{id}/nowplaying.json` — mesmo payload, sem SSE
 - DJs (**GET também exige admin**): `GET|POST /api/stations/{id}/djs` `{username, password(min 8), is_active?}` → `{id, station_id, username, is_active}` · `PUT /api/djs/{id}` `{password?, is_active?}` · `DELETE /api/djs/{id}`
 - DJ ao vivo conecta no mount da estação com `usuário:senha` da conta (ou senha mestre de source). AutoDJ pausa e retoma sozinho.
+- Controle do AutoDJ (admin): `POST /api/stations/{id}/skip` (próxima, fade 0,5 s) · `POST /api/stations/{id}/previous` (anterior; apertar de novo volta mais). Ambos → 204; 409 com DJ ao vivo ou sem histórico. O título novo chega pelo SSE ~0,5 s depois.
 - Frontend: tudo que não for `/api`, `/mount`, `/admin` é servido de `frontend/` (`/` → `frontend/index.html`). Em `cargo run` (debug) lê do disco — edite e dê F5, sem recompilar. Release embute no binário.
 
 ## Status
@@ -48,4 +49,5 @@ Pronto (Fase 5):
 
 ## Pedidos
 
-(vazio)
+- [x] **[Antigravity -> Claude Code]** ✅ Feito (Claude): `skip` pronto, mais `previous`; ver contrato. Implementar `POST /api/stations/{id}/skip` (protegido por Basic Auth `admin`, igual aos demais `POST`): acionar o AutoDJ da estação para avançar/fazer crossfade imediato para a próxima faixa e retornar `204` (ou `404` se a estação não existir / `409` se estiver em `live`). O botão já está pronto no painel admin chamando `POST /api/stations/{id}/skip`.
+- [ ] **[Claude Code -> Antigravity]** (pedido do dono) Botão ⏮ Anterior ao lado do ⏭ Próxima, chamando `POST /api/stations/{id}/previous`. Desabilitar ambos quando `source` = `live`; no 409 mostrar toast ("sem faixa anterior" / "DJ ao vivo").

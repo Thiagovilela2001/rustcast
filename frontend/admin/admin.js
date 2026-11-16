@@ -19,6 +19,7 @@
   const npTrack = document.getElementById('npTrack');
   const npStationInfo = document.getElementById('npStationInfo');
   const npListeners = document.getElementById('npListeners');
+  const skipTrackBtn = document.getElementById('skipTrackBtn');
 
   const dropzone = document.getElementById('dropzone');
   const mediaFileInput = document.getElementById('mediaFileInput');
@@ -253,13 +254,28 @@
         if (np.source === 'live') {
           npBadge.className = 'badge badge-live';
           npSource.textContent = 'AO VIVO';
+          skipTrackBtn.disabled = true;
         } else {
           npBadge.className = 'badge badge-autodj';
           npSource.textContent = 'AutoDJ';
+          skipTrackBtn.disabled = false;
         }
       } catch (_) {}
     };
   }
+
+  skipTrackBtn.addEventListener('click', async () => {
+    if (!currentStationId) return;
+    skipTrackBtn.disabled = true;
+    try {
+      await api(`/api/stations/${currentStationId}/skip`, { method: 'POST' });
+      toast('Avançando para a próxima música...');
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      skipTrackBtn.disabled = false;
+    }
+  });
 
   // ---------- Media ----------
   async function loadMedia() {

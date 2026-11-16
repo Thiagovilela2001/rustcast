@@ -1,6 +1,8 @@
-//! Two-deck mixer: equal-power crossfade over the last N seconds of the current track.
+//! Two-deck mixer: equal-power crossfade over the last N seconds of the current track, or a short one on skip.
 use super::deck::{Deck, RATE};
 use std::f32::consts::FRAC_PI_2;
+
+const SKIP_FADE_SECS: f32 = 0.5;
 
 pub struct Mixer {
     current: Option<Deck>,
@@ -47,11 +49,34 @@ impl Mixer {
             }
             self.fade_pos += (out.len() / 2) as u64;
         }
-        if got < out.len() / 2 {
+        // Track over, or (skip) the short fade finished before the track did.
+        if got < out.len() / 2 || (self.next.is_some() && self.fade_pos >= self.fade_len) {
             // current over: next deck (if any) takes over; else next block opens a fresh one
             self.current = self.next.take();
             title = self.current.as_ref().map(|d| (d.title.clone(), d.media_id));
         }
         title
+    }
+
+    /// Jump to the next track with a short crossfade. Returns a title only when it takes over immediately.
+    pub fn skip(&mut self, open_next: &mut dyn FnMut() -> Option<Deck>) -> Option<(String, i64)> {
+        // Mid-crossfade the listener already hears the incoming track as "current": drop the outgoing one, skip that.
+        if self.next.is_some() {
+            self.current = self.next.take();
+        }
+        let next = open_next();
+        match (&self.current, next) {
+            (Some(_), Some(n)) => {
+                // title is announced by fill() when the fade completes and the deck takes over (once)
+                self.next = Some(n);
+                self.fade_pos = 0;
+                self.fade_len = (SKIP_FADE_SECS * RATE as f32) as u64;
+                None
+            }
+            (_, n) => {
+                self.current = n;
+                self.current.as_ref().map(|d| (d.title.clone(), d.media_id))
+            }
+        }
     }
 }

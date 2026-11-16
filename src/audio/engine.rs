@@ -49,6 +49,12 @@ pub fn spawn(
                         announce(t);
                     }
                 }
+                if mount.skip.swap(false, std::sync::atomic::Ordering::SeqCst)
+                    && let Some(t) = mixer.skip(&mut open_next)
+                {
+                    announce(&t);
+                    now_playing = Some(t);
+                }
                 if let Some(t) = mixer.fill(&mut buf, &mut open_next) {
                     announce(&t);
                     now_playing = Some(t);

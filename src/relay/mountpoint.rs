@@ -22,6 +22,11 @@ pub struct MountPoint {
     /// Unix secs when the current track / live set started.
     pub started_at: AtomicU64,
     live: AtomicBool,
+    /// Admin controls for the AutoDJ (consumed by the engine / scheduler threads).
+    pub skip: AtomicBool,
+    pub requeue: Mutex<VecDeque<i64>>,
+    /// Media ids announced on air, newest last (back stack for "previous").
+    pub history: Mutex<VecDeque<i64>>,
 }
 
 impl MountPoint {
@@ -34,6 +39,9 @@ impl MountPoint {
             media_id: AtomicI64::new(0),
             started_at: AtomicU64::new(0),
             live: AtomicBool::new(false),
+            skip: AtomicBool::new(false),
+            requeue: Mutex::default(),
+            history: Mutex::default(),
         }
     }
 
@@ -59,7 +67,40 @@ impl MountPoint {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         self.started_at.store(now, Ordering::SeqCst);
         self.media_id.store(media_id, Ordering::SeqCst);
+        if media_id > 0 {
+            let mut h = self.history.lock().unwrap();
+            h.push_back(media_id);
+            if h.len() > 200 {
+                h.pop_front();
+            }
+        }
         self.meta.send_replace(title);
+    }
+
+    /// Skip forward. False while a live DJ holds the mount.
+    pub fn request_skip(&self) -> bool {
+        if self.is_live() {
+            return false;
+        }
+        self.skip.store(true, Ordering::SeqCst);
+        true
+    }
+
+    /// Replay the previous track. Pops current + previous off the back stack, so pressing again goes further back.
+    pub fn request_previous(&self) -> bool {
+        if self.is_live() {
+            return false;
+        }
+        let mut h = self.history.lock().unwrap();
+        if h.len() < 2 {
+            return false;
+        }
+        h.pop_back(); // current
+        let prev = h.pop_back().unwrap(); // re-added when it goes on air
+        drop(h);
+        self.requeue.lock().unwrap().push_front(prev);
+        self.skip.store(true, Ordering::SeqCst);
+        true
     }
 
     pub fn is_live(&self) -> bool {

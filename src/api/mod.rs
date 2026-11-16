@@ -11,7 +11,7 @@ use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{header, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -64,6 +64,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/djs/{id}", axum::routing::put(djs::update).delete(djs::remove))
         .route("/api/stations/{id}/nowplaying", get(nowplaying::sse))
         .route("/api/stations/{id}/nowplaying.json", get(nowplaying::json))
+        .route("/api/stations/{id}/skip", post(skip))
+        .route("/api/stations/{id}/previous", post(previous))
         .route("/api/nowplaying", get(azuracast::all))
         .route("/api/nowplaying/{station}", get(azuracast::one))
         .route("/api/nowplaying_static/{station}", get(azuracast::one))
@@ -79,6 +81,29 @@ async fn require_admin(State(s): State<AppState>, req: Request, next: Next) -> R
         return (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, "Basic realm=\"rustcast\"")]).into_response();
     }
     next.run(req).await
+}
+
+async fn station_mount(s: &AppState, id: i64) -> ApiResult<std::sync::Arc<crate::relay::mountpoint::MountPoint>> {
+    let st: Station = sqlx::query_as(sql!("SELECT {STATION_COLS} FROM stations WHERE id = ?")).bind(id).fetch_one(&s.db).await?;
+    Ok(s.mounts.get_or_create(&st.mountpoint))
+}
+
+/// POST /api/stations/{id}/skip — next track (short crossfade). 409 while a live DJ is on.
+async fn skip(State(s): State<AppState>, axum::extract::Path(id): axum::extract::Path<i64>) -> ApiResult<StatusCode> {
+    if station_mount(&s, id).await?.request_skip() {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::new(StatusCode::CONFLICT, "live DJ on air"))
+    }
+}
+
+/// POST /api/stations/{id}/previous — replay the previous track. 409 if live or no history yet.
+async fn previous(State(s): State<AppState>, axum::extract::Path(id): axum::extract::Path<i64>) -> ApiResult<StatusCode> {
+    if station_mount(&s, id).await?.request_previous() {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::new(StatusCode::CONFLICT, "live DJ on air, or no previous track"))
+    }
 }
 
 async fn list_stations(State(s): State<AppState>) -> ApiResult<Json<Vec<Station>>> {
