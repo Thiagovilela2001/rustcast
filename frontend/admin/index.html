@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RustCast — Painel Admin</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <!-- Login View -->
+  <section id="loginView" class="login-shell">
+    <form id="loginForm" class="login-card">
+      <div class="brand">
+        <span class="brand-mark">RC</span>
+        <span>RustCast Admin</span>
+      </div>
+      <p class="muted" style="margin: 0; font-size: 0.9rem;">
+        Entre com a senha de administrador (<span class="mono">admin</span>).
+      </p>
+      <div class="field">
+        <label for="loginUser">Usuário</label>
+        <input id="loginUser" class="input" type="text" value="admin" readonly>
+      </div>
+      <div class="field">
+        <label for="loginPass">Senha</label>
+        <input id="loginPass" class="input" type="password" placeholder="Senha do admin (padrão: admin)" required autofocus>
+      </div>
+      <div id="loginError" class="muted hidden" style="color: #fca5a5; font-size: 0.85rem;"></div>
+      <button id="loginBtn" class="btn btn-primary" type="submit">Entrar</button>
+      <a class="btn btn-sm" href="../" style="align-self: flex-start;">← Voltar ao Player</a>
+    </form>
+  </section>
+
+  <!-- Admin App View -->
+  <div id="appView" class="hidden">
+    <header class="admin-header">
+      <div class="admin-header-inner">
+        <div class="brand">
+          <span class="brand-mark">RC</span>
+          <span>RustCast Admin</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <label for="stationSelect" class="muted" style="font-size: 0.85rem;">Estação:</label>
+          <select id="stationSelect" class="select" style="width: auto; min-width: 210px;"></select>
+          <button id="toggleNewStationBtn" class="btn btn-sm" type="button">+ Nova Estação</button>
+          <a class="btn btn-sm" href="../" target="_blank" rel="noopener">Abrir Player</a>
+          <button id="logoutBtn" class="btn btn-sm btn-danger" type="button">Sair</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="admin-container">
+      <!-- Live status strip -->
+      <section class="card" style="padding: 14px 20px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span id="npBadge" class="badge badge-autodj"><span class="dot"></span><span id="npSource">AutoDJ</span></span>
+            <strong id="npTrack">Carregando...</strong>
+            <span id="npStationInfo" class="muted mono" style="font-size: 0.82rem;"></span>
+          </div>
+          <span class="listeners-pill"><span id="npListeners">0</span> ouvintes</span>
+        </div>
+      </section>
+
+      <!-- New Station Panel (collapsible) -->
+      <section id="newStationCard" class="card hidden">
+        <div class="card-header">
+          <h2 class="card-title">Criar Nova Estação</h2>
+          <button id="closeNewStationBtn" class="btn btn-sm" type="button">Fechar</button>
+        </div>
+        <form id="newStationForm" class="form-grid">
+          <div class="field">
+            <label for="stName">Nome da estação</label>
+            <input id="stName" class="input" type="text" placeholder="Minha Rádio" required>
+          </div>
+          <div class="field">
+            <label for="stMount">Mountpoint</label>
+            <input id="stMount" class="input mono" type="text" placeholder="rock" pattern="[A-Za-z0-9_-]{1,64}" required>
+          </div>
+          <div class="field">
+            <label for="stBitrate">Bitrate (kbps)</label>
+            <input id="stBitrate" class="input" type="number" min="64" max="320" value="128">
+          </div>
+          <div class="field">
+            <label for="stCrossfade">Crossfade (seg)</label>
+            <input id="stCrossfade" class="input" type="number" min="0" max="15" step="0.5" value="4">
+          </div>
+          <button class="btn btn-primary" type="submit">Criar Estação</button>
+        </form>
+      </section>
+
+      <!-- Tabs -->
+      <nav class="tabs" aria-label="Seções do painel">
+        <button class="tab-btn active" data-tab="media" type="button">Mídias</button>
+        <button class="tab-btn" data-tab="playlists" type="button">Playlists</button>
+        <button class="tab-btn" data-tab="djs" type="button">Contas de DJ</button>
+        <button class="tab-btn" data-tab="stations" type="button">Estações</button>
+      </nav>
+
+      <!-- TAB: MEDIA -->
+      <section id="tab-media" class="tab-panel" style="display: flex; flex-direction: column; gap: 18px;">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Upload de Mídia</h2>
+            <span id="uploadStatus" class="muted" style="font-size: 0.85rem;"></span>
+          </div>
+          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Selecionar ou arrastar arquivos de áudio">
+            <p style="margin: 0 0 6px; font-weight: 500;">Arraste arquivos de áudio aqui ou clique para selecionar</p>
+            <p class="muted" style="margin: 0; font-size: 0.84rem;">MP3, FLAC, OGG, WAV, AAC — tags ID3 e capa extraídas automaticamente</p>
+            <input id="mediaFileInput" type="file" accept="audio/*" multiple class="hidden">
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Catálogo de Mídias (<span id="mediaCount">0</span>)</h2>
+            <button id="refreshMediaBtn" class="btn btn-sm" type="button">Atualizar</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 52px;">Capa</th>
+                  <th>Título</th>
+                  <th>Artista</th>
+                  <th>Álbum</th>
+                  <th>Duração</th>
+                  <th style="width: 90px;">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="mediaTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: PLAYLISTS -->
+      <section id="tab-playlists" class="tab-panel hidden" style="display: flex; flex-direction: column; gap: 18px;">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title" id="playlistFormTitle">Nova Playlist</h2>
+            <button id="cancelPlaylistEditBtn" class="btn btn-sm hidden" type="button">Cancelar edição</button>
+          </div>
+          <form id="playlistForm" class="form-grid">
+            <input id="plEditId" type="hidden">
+            <div class="field">
+              <label for="plName">Nome</label>
+              <input id="plName" class="input" type="text" placeholder="Rotação Principal" required>
+            </div>
+            <div class="field">
+              <label for="plWeight">Peso (sorteio)</label>
+              <input id="plWeight" class="input" type="number" min="1" max="100" value="10" required>
+            </div>
+            <div class="field">
+              <label for="plInterval">Intervalo de vinheta (músicas)</label>
+              <input id="plInterval" class="input" type="number" min="0" value="0">
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <label class="checkbox-row">
+                <input id="plIsJingle" type="checkbox">
+                <span>É vinheta (jingle)</span>
+              </label>
+            </div>
+            <button id="plSubmitBtn" class="btn btn-primary" type="submit">Criar Playlist</button>
+          </form>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Playlists da Estação</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Peso</th>
+                    <th>Tipo</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="playlistsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="playlistMediaTitle">Faixas da Playlist</h2>
+            </div>
+            <div id="playlistMediaEmpty" class="muted" style="font-size: 0.9rem;">
+              Selecione uma playlist à esquerda para gerenciar suas faixas.
+            </div>
+            <div id="playlistMediaPanel" class="hidden" style="display: flex; flex-direction: column; gap: 14px;">
+              <form id="addMediaToPlaylistForm" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <select id="addMediaSelect" class="select" style="flex: 1; min-width: 180px;"></select>
+                <button class="btn btn-primary btn-sm" type="submit">+ Adicionar</button>
+              </form>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Faixa</th>
+                      <th>Artista</th>
+                      <th style="width: 80px;">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody id="playlistMediaBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: DJS -->
+      <section id="tab-djs" class="tab-panel hidden" style="display: flex; flex-direction: column; gap: 18px;">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Nova Conta de DJ</h2>
+            <span class="muted" style="font-size: 0.84rem;">
+              Conexão ao vivo (Mixxx / BUTT / ffmpeg): <span id="djMountHint" class="mono">/mount/radio</span>
+            </span>
+          </div>
+          <form id="djForm" class="form-grid">
+            <div class="field">
+              <label for="djUser">Usuário</label>
+              <input id="djUser" class="input" type="text" placeholder="dj_joao" required>
+            </div>
+            <div class="field">
+              <label for="djPass">Senha (mín. 8 caracteres)</label>
+              <input id="djPass" class="input" type="password" minlength="8" placeholder="••••••••" required>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <label class="checkbox-row">
+                <input id="djActive" type="checkbox" checked>
+                <span>Conta ativa</span>
+              </label>
+            </div>
+            <button class="btn btn-primary" type="submit">Criar DJ</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Contas de DJ</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Usuário</th>
+                  <th>Status</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="djsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: STATIONS -->
+      <section id="tab-stations" class="tab-panel hidden">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Estações Cadastradas</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nome</th>
+                  <th>Mountpoint</th>
+                  <th>Bitrate</th>
+                  <th>Crossfade</th>
+                  <th>Stream</th>
+                </tr>
+              </thead>
+              <tbody id="stationsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+  <script src="admin.js"></script>
+</body>
+</html>
