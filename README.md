@@ -8,7 +8,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024-c7ff45?style=flat-square&logo=rust&logoColor=11150e)](https://www.rust-lang.org/)
 [![Axum](https://img.shields.io/badge/Axum-0.8-c7ff45?style=flat-square)](https://github.com/tokio-rs/axum)
-[![License](https://img.shields.io/badge/license-não%20definida-667068?style=flat-square)](#licença)
+[![License](https://img.shields.io/badge/license-MIT-c7ff45?style=flat-square)](#licença)
 
 </div>
 
@@ -210,7 +210,9 @@ cargo test
 
 ## Licença
 
-Este projeto ainda não possui uma licença definida. Até que um arquivo `LICENSE` seja adicionado, todos os direitos permanecem reservados ao autor.
+Distribuído sob a licença [MIT](LICENSE).
+
+O comportamento do AutoDJ (tipos de playlist, horários, pedidos, formato da API) foi modelado a partir do [AzuraCast](https://github.com/AzuraCast/AzuraCast) como referência de funcionalidades, mas o código é uma reimplementação independente em Rust — nenhum código do AzuraCast (AGPL-3.0) foi copiado.
 
 ---
 
