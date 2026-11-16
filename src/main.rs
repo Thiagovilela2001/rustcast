@@ -33,6 +33,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("WARNING: {name} is the default '{default}' — set it before exposing this server");
         }
     }
+    db::scheduler::UTC_OFFSET_MIN.store(cfg.utc_offset_min, std::sync::atomic::Ordering::Relaxed);
     let pool = db::connect(&cfg.db_path).await?;
     let mounts = Mounts::default();
 

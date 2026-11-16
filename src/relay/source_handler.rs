@@ -50,22 +50,61 @@ pub async fn source_auth(db: &SqlitePool, mount: &str, header: Option<&str>, mas
     }
 }
 
-/// Peek without consuming: does this connection start with "SOURCE " or "PUT "?
+/// Peek without consuming: is this an Icecast source? `SOURCE ...`, or `PUT` to anything but `/api/`
+/// (API PUTs are normal HTTP and must reach axum).
 pub async fn is_source(sock: &TcpStream) -> bool {
-    let mut buf = [0u8; 7];
+    let mut buf = [0u8; 9];
     for _ in 0..200 {
         let Ok(n) = sock.peek(&mut buf).await else { return false };
-        let hit = |p: &[u8]| buf[..n.min(p.len())] == p[..n.min(p.len())];
-        if n == 0 || !(hit(b"SOURCE ") || hit(b"PUT ")) {
-            return false;
+        if let Some(v) = classify(&buf[..n]) {
+            return v;
         }
-        if buf[..n].starts_with(b"SOURCE ") || buf[..n].starts_with(b"PUT ") {
-            return true;
-        }
-        // ponytail: partial-prefix poll loop, fine for a 7-byte sniff
+        // ponytail: partial-prefix poll loop, fine for a 9-byte sniff
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     false
+}
+
+/// Some(true) = source, Some(false) = HTTP, None = need more bytes.
+fn classify(b: &[u8]) -> Option<bool> {
+    let prefix = |p: &[u8]| b[..b.len().min(p.len())] == p[..b.len().min(p.len())];
+    if b.is_empty() {
+        return Some(false);
+    }
+    if b.starts_with(b"SOURCE ") {
+        return Some(true);
+    }
+    if b.starts_with(b"PUT /api/") {
+        return Some(false);
+    }
+    if b.starts_with(b"PUT ") {
+        // could still turn into "PUT /api/" -> wait; otherwise it's a source
+        return if prefix(b"PUT /api/") { None } else { Some(true) };
+    }
+    if prefix(b"SOURCE ") || prefix(b"PUT ") {
+        return None;
+    }
+    Some(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify;
+
+    #[test]
+    fn classify_routes_sources_and_api() {
+        assert_eq!(classify(b"SOURCE /radio HTTP/1.0"), Some(true));
+        assert_eq!(classify(b"PUT /mount/radio HTTP/1.1"), Some(true));
+        assert_eq!(classify(b"PUT /radio HTTP/1.1"), Some(true));
+        assert_eq!(classify(b"PUT /api/playlists/1 HTTP/1.1"), Some(false));
+        assert_eq!(classify(b"GET /mount/radio HTTP/1.1"), Some(false));
+        assert_eq!(classify(b"POST /api/x"), Some(false));
+        assert_eq!(classify(b"PU"), None);
+        assert_eq!(classify(b"PUT /ap"), None);
+        assert_eq!(classify(b"SOUR"), None);
+        assert_eq!(classify(b"PUT /ab"), Some(true), "can't become /api/ anymore");
+        assert_eq!(classify(b"PUT /"), None);
+    }
 }
 
 pub async fn handle_source(sock: TcpStream, mounts: Mounts, db: SqlitePool, password: String) -> std::io::Result<()> {

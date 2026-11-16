@@ -1,5 +1,5 @@
 use super::{ApiError, ApiResult, AppState};
-use crate::db::models::{Media, Playlist, MEDIA_COLS, PLAYLIST_COLS};
+use crate::db::models::{Media, Playlist, MEDIA_COLS, PLAYLIST_COLS, PLAYLIST_ORDERS, PLAYLIST_TYPES};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -13,41 +13,102 @@ pub async fn list(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<J
 pub struct PlaylistIn {
     name: Option<String>,
     weight: Option<i64>,
+    #[serde(rename = "type")]
+    playlist_type: Option<String>,
+    play_per: Option<i64>,
+    play_per_hour_minute: Option<i64>,
+    order: Option<String>,
+    // legacy (still accepted): is_jingle=true == type once_per_x_songs, jingle_interval == play_per
     is_jingle: Option<bool>,
     jingle_interval: Option<i64>,
 }
 
+struct Resolved {
+    playlist_type: Option<String>,
+    play_per: Option<i64>,
+    minute: Option<i64>,
+    order: Option<String>,
+}
+
+fn resolve(p: &PlaylistIn) -> ApiResult<Resolved> {
+    let bad = |m: &str| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, m.to_string());
+    let playlist_type = match (&p.playlist_type, p.is_jingle) {
+        (Some(t), _) => Some(t.clone()),
+        (None, Some(true)) => Some("once_per_x_songs".into()),
+        (None, Some(false)) => Some("default".into()),
+        (None, None) => None,
+    };
+    if let Some(t) = &playlist_type
+        && !PLAYLIST_TYPES.contains(&t.as_str())
+    {
+        return Err(bad("type: default | once_per_x_songs | once_per_x_minutes | once_per_hour"));
+    }
+    if let Some(o) = &p.order
+        && !PLAYLIST_ORDERS.contains(&o.as_str())
+    {
+        return Err(bad("order: shuffle | random | sequential"));
+    }
+    if p.play_per_hour_minute.is_some_and(|m| !(0..=59).contains(&m)) {
+        return Err(bad("play_per_hour_minute: 0-59"));
+    }
+    Ok(Resolved {
+        playlist_type,
+        play_per: p.play_per.or(p.jingle_interval).map(|v| v.max(0)),
+        minute: p.play_per_hour_minute,
+        order: p.order.clone(),
+    })
+}
+
+/// Keep legacy columns mirroring the new ones, then return the row.
+async fn sync_legacy(s: &AppState, id: i64) -> ApiResult<Playlist> {
+    sqlx::query("UPDATE playlists SET is_jingle = (playlist_type != 'default'), jingle_interval = play_per WHERE id = ?")
+        .bind(id)
+        .execute(&s.db)
+        .await?;
+    Ok(sqlx::query_as(sql!("SELECT {PLAYLIST_COLS} FROM playlists WHERE id = ?")).bind(id).fetch_one(&s.db).await?)
+}
+
 pub async fn create(State(s): State<AppState>, Path(id): Path<i64>, Json(p): Json<PlaylistIn>) -> ApiResult<(StatusCode, Json<Playlist>)> {
+    let r = resolve(&p)?;
     let name = p.name.filter(|n| !n.trim().is_empty()).ok_or_else(|| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "name required"))?;
     sqlx::query("SELECT 1 FROM stations WHERE id = ?").bind(id).fetch_one(&s.db).await?;
-    let pl = sqlx::query_as(sql!(
-        "INSERT INTO playlists (station_id, name, weight, is_jingle, jingle_interval) VALUES (?, ?, ?, ?, ?) RETURNING {PLAYLIST_COLS}"
-    ))
+    let (new_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO playlists (station_id, name, weight, playlist_type, play_per, play_per_hour_minute, play_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
     .bind(id)
     .bind(name.trim())
     .bind(p.weight.unwrap_or(10).max(0))
-    .bind(p.is_jingle.unwrap_or(false))
-    .bind(p.jingle_interval.unwrap_or(0).max(0))
+    .bind(r.playlist_type.unwrap_or_else(|| "default".into()))
+    .bind(r.play_per.unwrap_or(0))
+    .bind(r.minute.unwrap_or(0))
+    .bind(r.order.unwrap_or_else(|| "shuffle".into()))
     .fetch_one(&s.db)
     .await?;
-    Ok((StatusCode::CREATED, Json(pl)))
+    Ok((StatusCode::CREATED, Json(sync_legacy(&s, new_id).await?)))
 }
 
 /// Partial update: omitted fields keep their value.
 pub async fn update(State(s): State<AppState>, Path(id): Path<i64>, Json(p): Json<PlaylistIn>) -> ApiResult<Json<Playlist>> {
-    Ok(Json(
-        sqlx::query_as(sql!(
-            "UPDATE playlists SET name = COALESCE(?, name), weight = COALESCE(?, weight), is_jingle = COALESCE(?, is_jingle),
-             jingle_interval = COALESCE(?, jingle_interval) WHERE id = ? RETURNING {PLAYLIST_COLS}"
-        ))
-        .bind(p.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()))
-        .bind(p.weight.map(|w| w.max(0)))
-        .bind(p.is_jingle)
-        .bind(p.jingle_interval.map(|j| j.max(0)))
-        .bind(id)
-        .fetch_one(&s.db)
-        .await?,
-    ))
+    let r = resolve(&p)?;
+    let res = sqlx::query(
+        "UPDATE playlists SET name = COALESCE(?, name), weight = COALESCE(?, weight), playlist_type = COALESCE(?, playlist_type),
+         play_per = COALESCE(?, play_per), play_per_hour_minute = COALESCE(?, play_per_hour_minute), play_order = COALESCE(?, play_order)
+         WHERE id = ?",
+    )
+    .bind(p.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()))
+    .bind(p.weight.map(|w| w.max(0)))
+    .bind(r.playlist_type)
+    .bind(r.play_per)
+    .bind(r.minute)
+    .bind(r.order)
+    .bind(id)
+    .execute(&s.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(sqlx::Error::RowNotFound.into());
+    }
+    Ok(Json(sync_legacy(&s, id).await?))
 }
 
 pub async fn remove(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<StatusCode> {

@@ -9,6 +9,7 @@ pub struct Config {
     pub threads: usize,
     pub public_url: String,
     pub cors_origin: Option<String>,
+    pub utc_offset_min: i64,
 }
 
 fn var(k: &str, default: &str) -> String {
@@ -25,6 +26,7 @@ impl Config {
             db_path: var("RUSTCAST_DB", "storage/rustcast.db"),
             threads: var("RUSTCAST_THREADS", "2").parse().unwrap_or(2).max(1),
             public_url: var("RUSTCAST_PUBLIC_URL", "").trim_end_matches('/').to_string(),
+            utc_offset_min: var("RUSTCAST_UTC_OFFSET_MIN", "0").parse().unwrap_or(0),
             cors_origin: env::var("RUSTCAST_CORS_ORIGIN").ok().filter(|v| !v.is_empty()),
         }
     }

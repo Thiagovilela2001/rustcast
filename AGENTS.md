@@ -25,10 +25,13 @@ Pronto (Fase 4) — **toda escrita (POST/PUT/DELETE) exige Basic Auth `admin:<RU
 - `GET /api/stations` → `[{id, name, mountpoint, bitrate, crossfade_secs}]` · `POST` `{name, mountpoint, bitrate?, crossfade_secs?}` → 201 (sobe AutoDJ da estação na hora)
 - `GET /api/stations/{id}/media` → `[{id, station_id, title, artist, album, duration_ms}]` · `POST` multipart campo `file` → 201 / 422 se não for áudio
 - `DELETE /api/media/{id}` → 204 · `GET /api/media/{id}/art` → imagem ou 404 (use fallback no `<img onerror>`)
-- `GET|POST /api/stations/{id}/playlists` — `{name, weight?=10, is_jingle?=false, jingle_interval?=0}` → `{id, station_id, name, weight, is_jingle, jingle_interval}`
+- `GET|POST /api/stations/{id}/playlists` — `{name, weight?=10, type?="default", play_per?=0, play_per_hour_minute?=0, order?="shuffle"}` → mesmos campos + `id, station_id` + legado `is_jingle, jingle_interval`
+  - `type`: `default` (por peso) · `once_per_x_songs` (a cada `play_per` músicas — vinheta) · `once_per_x_minutes` (a cada `play_per` min) · `once_per_hour` (no minuto `play_per_hour_minute`, janela 15 min)
+  - `order`: `shuffle` (todas antes de repetir) · `random` · `sequential` (pela posição na playlist)
+  - Legado ainda aceito: `is_jingle:true` + `jingle_interval:N` == `type:"once_per_x_songs", play_per:N`
 - `PUT /api/playlists/{id}` (parcial, mesmos campos) · `DELETE /api/playlists/{id}` → 204
 - `GET /api/playlists/{id}/media` · `POST /api/playlists/{id}/media` `{media_id}` → 204 · `DELETE /api/playlists/{id}/media/{media_id}` → 204
-- Regras do AutoDJ: playlist sorteada por peso; vinheta (`is_jingle`) a cada `jingle_interval` músicas; sem playlists → catálogo todo; evita repetir os últimos 3 artistas.
+- Regras do AutoDJ: prioridade once_per_hour > once_per_x_songs > once_per_x_minutes > default (sorteio por peso); sem playlist default → catálogo todo (menos faixas só de vinheta); evita os últimos 3 artistas.
 
 Pronto (Fase 5):
 - `GET /api/stations/{id}/nowplaying` — SSE (`new EventSource(...)`), evento `data: {"title","artist","art_url"|null,"listeners","source":"autodj"|"live"}`; 1º evento na conexão, depois a cada troca de faixa e a cada 5 s
@@ -53,3 +56,4 @@ Pronto (Fase 5):
 
 - [x] **[Antigravity -> Claude Code]** ✅ Feito (Claude): `skip` pronto, mais `previous`; ver contrato. Implementar `POST /api/stations/{id}/skip` (protegido por Basic Auth `admin`, igual aos demais `POST`): acionar o AutoDJ da estação para avançar/fazer crossfade imediato para a próxima faixa e retornar `204` (ou `404` se a estação não existir / `409` se estiver em `live`). O botão já está pronto no painel admin chamando `POST /api/stations/{id}/skip`.
 - [ ] **[Claude Code -> Antigravity]** (pedido do dono) Botão ⏮ Anterior ao lado do ⏭ Próxima, chamando `POST /api/stations/{id}/previous`. Desabilitar ambos quando `source` = `live`; no 409 mostrar toast ("sem faixa anterior" / "DJ ao vivo").
+- [x] **[Claude Code -> Antigravity]** FYI: `PUT` da API (`/api/playlists/{id}`, `/api/djs/{id}`) estava quebrado (401) até o commit do item 2 — era bug no backend, já corrigido. Se o painel tinha workaround, pode remover.
